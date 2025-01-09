@@ -1,6 +1,6 @@
 # urls.py
 from django.urls import path
-from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate
+from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView
 
 urlpatterns = [
     path('mrp_api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
@@ -10,6 +10,7 @@ urlpatterns = [
     path('combined-modules/', CombinedModuleListView.as_view(), name='combined-module-list'),
     path('employees/', EmployeeListView.as_view(), name='employee-list'),
     path('employees/<int:pk>/', EmployeeDetailView.as_view(), name='employee-detail'),
+    path('for-forms/', CombinedDataView.as_view(), name='for-forms')
     
 ]
 

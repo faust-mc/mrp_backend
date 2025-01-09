@@ -10,10 +10,11 @@ from rest_framework import status
 from django.contrib.auth.models import User
 from django.db.models import Q, Value
 from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, Submodules
-from .serializers import SubmoduleSerializer, ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer
+from .serializers import SubmoduleSerializer, ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer
 from collections import defaultdict
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import authenticate
+
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -130,4 +131,54 @@ class RoleListCreate(ListCreateAPIView):
         serializer.save(user=self.request.user)
         
 
+class CombinedDataView(APIView):
     
+    permission_classes = [IsAuthenticated] 
+
+    def get(self, request):
+        
+        modules_with_no_submodules = Modules.objects.filter(submodules__isnull=True)
+        submodules = Submodules.objects.all()
+        modules = list(modules_with_no_submodules) + list(submodules)
+        module_serializer = ModuleSerializer(modules, many=True)
+        areas = Area.objects.values('location').distinct()  
+        area_serializer = AreaSerializer(areas, many=True)
+        departments = Departments.objects.all()
+        dept_serializer = DepartmentsSerializer(departments, many=True)
+        roles = Roles.objects.all()
+        role_serializer = RoleSerializer(roles, many=True)
+
+        supervisor_role = roles.filter(role='Supervisors').first()
+        
+        if supervisor_role:
+            # Get all employees under the supervisor role
+            employees_under_supervisor_role = Employee.objects.filter(role=supervisor_role)
+            supervisor_data = employees_under_supervisor_role.values('id', 'user__username', 'user__first_name', 'user__last_name')
+          
+
+        else:
+            supervisor_data = []
+
+   
+        print(supervisor_data)
+        print("----")
+
+
+        # Combine all serialized data into a single response
+        response_data = {
+            "modules": module_serializer.data,
+            "areas": areas,
+            "roles": role_serializer.data,
+            "departments": dept_serializer.data,
+            "supervisors": supervisor_data
+        }
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        
+        serializer = RoleSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(user=request.user)  # Save the role with the current user
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
