@@ -55,15 +55,15 @@ class EmployeeSerializer(serializers.ModelSerializer):
     department_id = serializers.PrimaryKeyRelatedField(source='department', read_only=True)
     role = serializers.StringRelatedField(many=True)
     superior = serializers.SerializerMethodField()
-    access = serializers.SerializerMethodField()  # Combined access (modules and submodules)
-    access_permissions = serializers.SerializerMethodField()
+    modules = serializers.SerializerMethodField()  # Combined access (modules and submodules)
+    module_permissions = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
         fields = [
             'id', 'user', 'department', 'department_id', 'date_join', 'role',
-            'locked', 'attempts', 'superior', 'cellphone_number', 'telephone_number', 'access',
-            'access_permissions',
+            'locked', 'attempts', 'superior', 'cellphone_number', 'telephone_number', 'modules',
+            'module_permissions',
         ]
 
     def get_superior(self, obj):
@@ -76,9 +76,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
             }
         return None
 
-    def get_access_permissions(self, obj):
+    def get_module_permissions(self, obj):
         # Get permissions directly assigned to the employee
-        employee_permissions = obj.access_permissions.all()
+        employee_permissions = obj.module_permissions.all()
 
         # Get permissions assigned through roles
         role_permissions = ModulePermissions.objects.filter(roles__in=obj.role.all())
@@ -96,13 +96,13 @@ class EmployeeSerializer(serializers.ModelSerializer):
             for perm in combined_permissions
         ]
 
-    def get_access(self, obj):
+    def get_modules(self, obj):
         """
         Combine modules assigned directly to the employee and through roles,
         including only the submodules explicitly assigned to the user or their roles.
         """
         # Directly assigned modules
-        employee_modules = obj.access.all()
+        employee_modules = obj.modules.all()
 
         # Modules assigned through roles
         role_modules = Modules.objects.filter(roles__in=obj.role.all())
@@ -114,7 +114,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         result = []
         for module in combined_modules:
             # Submodules directly assigned to the user or through roles
-            employee_submodules = obj.access_submodules.filter(module=module)
+            employee_submodules = obj.submodules.filter(module=module)
             role_submodules = Submodules.objects.filter(
                 module=module, roles__in=obj.role.all()
             )
