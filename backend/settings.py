@@ -59,8 +59,8 @@ REST_FRAMEWORK = {
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
+    "REFRESH_TOKEN_LIFETIME": timedelta(hours=10),
     "AUTH_HEADER_TYPES": ("CTGI7a00fn",),
     # 'ROTATE_REFRESH_TOKENS': True,
     # "BLACKLIST_AFTER_ROTATION": True,
@@ -160,3 +160,8 @@ CORS_ALLOW_CREDENTIALS = True
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+# Redis Configuration
+REDIS_HOST = 'localhost'  # Replace with your Redis server's hostname or IP
+REDIS_PORT = 6379         # Default Redis port
+REDIS_DB = 0              # Redis database index (0 by default)
+REDIS_PASSWORD = None     # Add password if your Redis server requires authentication

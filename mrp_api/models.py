@@ -8,6 +8,8 @@ class Area(models.Model):
 	province = models.CharField(max_length=50)
 	municipality = models.CharField(max_length=50)
 
+	def __str__(self):
+		return self.municipality
 
 class Departments(models.Model):
 	department = models.CharField(max_length=100)
@@ -21,11 +23,16 @@ class ModulePermissions(models.Model):
 	codename = models.CharField(max_length=80)
 	content_type_id = models.IntegerField()
 
+	def __str__(self):
+		return self.name
+
 
 class Modules(models.Model):
 	module = models.CharField(max_length=100)
 	icon = models.CharField(max_length = 100, blank= True, null = True)
 	slug = models.CharField(max_length = 20, blank=True, null=True)
+	path = models.CharField(max_length=20, blank=True, null=True)
+	components = models.CharField(max_length = 20, blank=True, null=True)
 
 	def __str__(self):
 		return self.module
@@ -35,6 +42,7 @@ class Submodules(models.Model):
 	module = models.ForeignKey(Modules, on_delete=models.CASCADE)
 	submodule = models.CharField(max_length = 100)
 	slug = models.CharField(max_length = 20, blank=True, null=True)
+	components = models.CharField(max_length = 20, blank=True, null=True)
 
 
 	def __str__(self):
@@ -43,28 +51,31 @@ class Submodules(models.Model):
 
 
 class Roles(models.Model):
-	role = models.CharField(max_length=20)
+    role = models.CharField(max_length=20)
+    permissions = models.ManyToManyField(ModulePermissions, blank=True)
+    modules = models.ManyToManyField(Modules, blank=True)
+    submodules = models.ManyToManyField(Submodules, blank=True)
 
-	def __str__(self):
-		return self.role
-
-
-
-
-
+    def __str__(self):
+        return self.role
 
 
 class Employee(models.Model):
 	user = models.OneToOneField(User, on_delete=models.CASCADE)
-	area = models.ForeignKey(Area, on_delete=models.CASCADE)
+
 	department = models.ForeignKey(Departments, on_delete=models.CASCADE, blank=True, null=True)
 	date_join = models.DateTimeField(null=True, blank=True)
 	role = models.ManyToManyField(Roles)
+	access = models.ManyToManyField(Modules)
+	access_permissions = models.ManyToManyField(ModulePermissions)
+	access_area = models.ManyToManyField(Area)
+	access_submodules = models.ManyToManyField(Submodules,blank=True, null=True)
 	locked = models.IntegerField(default=0)
 	attempts = models.IntegerField(default=0)
 	cellphone_number = models.CharField(max_length=20, blank=True, null=True)
 	telephone_number = models.CharField(max_length=20, blank=True, null=True)
 	superior = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='subordinates')
+
 
 	def __str__(self):
 		return self.user.username

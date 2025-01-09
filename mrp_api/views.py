@@ -1,6 +1,6 @@
 from django.shortcuts import render
 from rest_framework.views import APIView
-from rest_framework.generics import RetrieveAPIView, ListAPIView
+from rest_framework.generics import RetrieveAPIView, ListAPIView, ListCreateAPIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -9,8 +9,8 @@ from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework import status
 from django.contrib.auth.models import User
 from django.db.models import Q, Value
-from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee
-from .serializers import SubmoduleSerializer, ModuleSerializer, EmployeeSerializer
+from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, Submodules
+from .serializers import SubmoduleSerializer, ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer
 from collections import defaultdict
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import authenticate
@@ -80,3 +80,54 @@ class EmployeeListView(APIView):
         employees = Employee.objects.all()
         serializer = EmployeeSerializer(employees, many=True)
         return Response(serializer.data)
+
+
+class EmployeeDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            user = User.objects.get(pk=pk)
+            employee = user.employee
+            serializer = EmployeeSerializer(employee)
+            return Response(serializer.data)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        except Employee.DoesNotExist:
+            return Response({"error": "Employee data not found for this user"}, status=404)
+
+
+
+class CombinedModuleListView(APIView):
+    def get(self, request):
+        modules_with_no_submodules = Modules.objects.filter(submodules__isnull=True)
+        submodules = Submodules.objects.all()
+      
+        modules = list(modules_with_no_submodules) + list(submodules)
+       
+        serializer = ModuleSerializer(modules, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AreaListView(ListAPIView):
+
+    def get(self, request):
+        area = Area.objects.all()
+        serializer = AreaSerializer(area, many=True)
+        
+        return Response(serializer.data)
+
+
+
+class RoleListCreate(ListCreateAPIView):
+    serializer_class = RoleSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Roles.objects.all()
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+        
+
+    
