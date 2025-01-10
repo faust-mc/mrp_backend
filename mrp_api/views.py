@@ -11,7 +11,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth.hashers import make_password, check_password
 from django.db.models import Q, Value
 from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, Submodules
-from .serializers import SubmoduleSerializer, ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer
+from .serializers import SubmoduleSerializer, ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer
 from collections import defaultdict
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import authenticate
@@ -41,7 +41,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             return Response({"error": "User is locked. Please contact administrator."},
                             status=status.HTTP_403_FORBIDDEN)
 
-        # authenticate the user
+        #authenticate the user
         authenticated_user = authenticate(username=username, password=password)
         if authenticated_user:
             #reset attempts and generate JWT tokens if login is successful
@@ -255,4 +255,25 @@ class CombinedDataView(APIView):
         if serializer.is_valid():
             serializer.save(user=request.user)  # Save the role with the current user
             return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data)
+        if serializer.is_valid():
+            user = request.user
+            old_password = serializer.validated_data['old_password']
+            new_password = serializer.validated_data['new_password']
+            if not user.check_password(old_password):
+                return Response({"old_password": ["You entered wrong password."]}, status=status.HTTP_400_BAD_REQUEST)
+
+            user.set_password(new_password)
+            user.save()
+
+            return Response({"detail": "Password changed successfully."}, status=status.HTTP_200_OK)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
