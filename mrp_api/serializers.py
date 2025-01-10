@@ -52,8 +52,10 @@ class UserSerializer(serializers.ModelSerializer):
 class EmployeeSerializer(serializers.ModelSerializer):
     user = UserSerializer()
     department = serializers.StringRelatedField(allow_null=True)
-    department_id = serializers.PrimaryKeyRelatedField(source='department', read_only=True)
-    role = serializers.StringRelatedField(many=True)
+    department_id = serializers.PrimaryKeyRelatedField(
+        source='department', queryset=Departments.objects.all(), allow_null=True
+    )
+    role = RoleSerializer(many=True)  # Use RoleSerializer for better structure
     superior = serializers.SerializerMethodField()
     modules = serializers.SerializerMethodField()  # Combined access (modules and submodules)
     module_permissions = serializers.SerializerMethodField()
@@ -62,28 +64,20 @@ class EmployeeSerializer(serializers.ModelSerializer):
         model = Employee
         fields = [
             'id', 'user', 'department', 'department_id', 'date_join', 'role',
-            'locked', 'attempts', 'superior', 'cellphone_number', 'telephone_number', 'modules',
-            'module_permissions',
+            'locked', 'attempts', 'superior', 'cellphone_number', 'telephone_number',
+            'modules', 'module_permissions',
         ]
 
     def get_superior(self, obj):
+        """Fetch superior details using a nested serializer instead of a manual dictionary."""
         if obj.superior:
-            return {
-                "id": obj.superior.id,
-                "username": obj.superior.user.username,
-                "email": obj.superior.user.email,
-                "full_name": f"{obj.superior.user.first_name} {obj.superior.user.last_name}",
-            }
+            return UserSerializer(obj.superior.user).data
         return None
 
     def get_module_permissions(self, obj):
-        # Get permissions directly assigned to the employee
+        """Fetch combined permissions from employee and roles."""
         employee_permissions = obj.module_permissions.all()
-
-        # Get permissions assigned through roles
         role_permissions = ModulePermissions.objects.filter(roles__in=obj.role.all())
-
-        # Combine both sets of permissions and remove duplicates
         combined_permissions = (employee_permissions | role_permissions).distinct()
 
         return [
@@ -97,32 +91,19 @@ class EmployeeSerializer(serializers.ModelSerializer):
         ]
 
     def get_modules(self, obj):
-        """
-        Combine modules assigned directly to the employee and through roles,
-        including only the submodules explicitly assigned to the user or their roles.
-        """
-        # Directly assigned modules
+        """Combine modules from both employee and roles, including associated submodules."""
         employee_modules = obj.modules.all()
-
-        # Modules assigned through roles
         role_modules = Modules.objects.filter(roles__in=obj.role.all())
-
-        # Combine both sets of modules and remove duplicates
         combined_modules = (employee_modules | role_modules).distinct()
 
-        # Serialize modules with their associated submodules
         result = []
         for module in combined_modules:
-            # Submodules directly assigned to the user or through roles
             employee_submodules = obj.submodules.filter(module=module)
             role_submodules = Submodules.objects.filter(
                 module=module, roles__in=obj.role.all()
             )
-
-            # Combine both sets of submodules and remove duplicates
             combined_submodules = (employee_submodules | role_submodules).distinct()
 
-            # Add module with filtered submodules to the result
             result.append({
                 "id": module.id,
                 "module": module.module,
@@ -130,18 +111,11 @@ class EmployeeSerializer(serializers.ModelSerializer):
                 "slug": module.slug,
                 "path": module.path,
                 "components": module.components,
-                "submodules": [
-                    {
-                        "id": submodule.id,
-                        "submodule": submodule.submodule,
-                        "slug": submodule.slug,
-                        "components": submodule.components,
-                    }
-                    for submodule in combined_submodules
-                ],
+                "submodules": SubmoduleSerializer(combined_submodules, many=True).data,
             })
 
         return result
+
 
 
 

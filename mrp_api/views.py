@@ -8,13 +8,15 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework import status
 from django.contrib.auth.models import User
+from django.contrib.auth.hashers import make_password, check_password
 from django.db.models import Q, Value
 from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, Submodules
 from .serializers import SubmoduleSerializer, ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer
 from collections import defaultdict
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import authenticate
-
+import random
+import string
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -23,26 +25,26 @@ class CustomTokenObtainPairView(TokenObtainPairView):
         username = request.data.get('username')
         password = request.data.get('password')
 
-        # Check if the user exists
+        #check if the user exists
         user = User.objects.filter(username=username).first()
         if not user:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # Check if the user is associated with a CompanyUser instance
+        #check if the user is associated with a CompanyUser instance
         try:
             employee = Employee.objects.get(user=user)
         except Employee.DoesNotExist:
             return Response({"error": "User not associated with a company"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Check if the user is locked
+        #Check if the user is locked
         if employee.locked == 1:
             return Response({"error": "User is locked. Please contact administrator."},
                             status=status.HTTP_403_FORBIDDEN)
 
-        # Authenticate the user
+        # authenticate the user
         authenticated_user = authenticate(username=username, password=password)
         if authenticated_user:
-            # Reset attempts and generate JWT tokens if login is successful
+            #reset attempts and generate JWT tokens if login is successful
             employee.attempts = 0
             employee.save()
 
@@ -52,11 +54,11 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 'access': str(refresh.access_token),
             }, status=status.HTTP_200_OK)
         else:
-            # Increment login attempts if authentication fails
+            #increment login attempts if authentication fails
             employee.attempts += 1
             employee.save()
 
-            # Optionally, lock the user after 3 failed attempts
+            #lock the user after 3 failed attempts
             if employee.attempts >= 3:
                 employee.locked = 1
                 employee.save()
@@ -74,13 +76,89 @@ class ModuleListView(ListAPIView):
         return Response(serializer.data)
 
 
-class EmployeeListView(APIView):
-    permission_classes = [IsAuthenticated]
+class EmployeeListView(ListCreateAPIView):
+    queryset = Employee.objects.all()
+    serializer_class = EmployeeSerializer
 
-    def get(self, request):
-        employees = Employee.objects.all()
-        serializer = EmployeeSerializer(employees, many=True)
-        return Response(serializer.data)
+    def create(self, request, *args, **kwargs):
+        data = request.data
+
+        generated_password = ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(6))
+
+        hashed_password = make_password(generated_password)
+
+
+        user_data = {
+            "username": data.get("first_name")+data.get("last_name"),
+            "email": data.get("email"),
+            "first_name": data.get("first_name"),
+            "last_name": data.get("last_name"),
+            "password": hashed_password,
+        }
+        user, created = User.objects.get_or_create(
+            username=user_data["username"], defaults=user_data
+        )
+        if not created:
+            return Response(
+                {"error": "User with this email already exists."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # create the Employee
+        try:
+            employee = Employee.objects.create(
+                user=user,
+                department=Departments.objects.get(id=data["department"]),
+                cellphone_number=data.get("mobile_number"),
+                telephone_number=data.get("telephone_number"),
+                superior=Employee.objects.filter(id=data.get("supervisor")).first(),
+                added_by=request.user,
+            )
+
+            # assign roles
+            if "role" in data:
+                role = Roles.objects.get(id=data["role"])
+                employee.role.add(role)
+
+            # assign modules
+            if "modules" in data:
+                modules = Modules.objects.filter(id__in=data["modules"])
+                employee.modules.add(*modules)
+
+            # assign submodules
+            if "submodules" in data:
+                submodules = Submodules.objects.filter(id__in=data["submodules"])
+                modules = set(submodule.module for submodule in submodules)
+            for module in modules:
+                employee.modules.add(module)
+                employee.submodules.add(*submodules)
+            # assign areas
+            if "area" in data:
+                areas = Area.objects.filter(location__in=data["area"])
+                employee.area.add(*areas)
+
+            # ssign module permissions
+            if "permissions" in data:
+                for module_name, actions in data["permissions"].items():
+                    for action, has_permission in actions.items():
+                        
+                        if has_permission:
+                            permission = ModulePermissions.objects.filter(
+                                codename=action
+                            ).first()
+                            if permission:
+                                employee.module_permissions.add(permission)
+
+            employee.save()
+            return_data = {"data": EmployeeSerializer(employee).data, "message": f"Default Password is {generated_password}. Please save it immediatly as this window will close in "}
+
+            return Response(return_data, status=status.HTTP_201_CREATED
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to create employee. Details: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
 
 class EmployeeDetailView(APIView):
@@ -154,14 +232,10 @@ class CombinedDataView(APIView):
             # Get all employees under the supervisor role
             employees_under_supervisor_role = Employee.objects.filter(role=supervisor_role)
             supervisor_data = employees_under_supervisor_role.values('id', 'user__username', 'user__first_name', 'user__last_name')
-          
+
 
         else:
             supervisor_data = []
-
-   
-        print(supervisor_data)
-        print("----")
 
 
         # Combine all serialized data into a single response

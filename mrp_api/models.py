@@ -6,10 +6,22 @@ from django.contrib.auth.models import User
 class Area(models.Model):
 	location = models.CharField(max_length=250)
 	province = models.CharField(max_length=50)
-	municipality = models.CharField(max_length=50)
+	
 
 	def __str__(self):
-		return self.municipality
+		return self.location
+
+
+class Branches(models.Model):
+	area = models.ForeignKey(Area, on_delete=models.CASCADE)
+	branch_code = models.CharField(max_length=50)
+	municipality = models.CharField(max_length=50)
+	barangay = models.CharField(max_length=50)
+	street = models.CharField(max_length=50)
+
+	def __str__(self):
+		return self.branch_code
+
 
 class Departments(models.Model):
 	department = models.CharField(max_length=100)
@@ -61,6 +73,7 @@ class Roles(models.Model):
 
 
 class Employee(models.Model):
+
 	user = models.OneToOneField(User, on_delete=models.CASCADE)
 
 	department = models.ForeignKey(Departments, on_delete=models.CASCADE, blank=True, null=True)
@@ -75,6 +88,7 @@ class Employee(models.Model):
 	cellphone_number = models.CharField(max_length=20, blank=True, null=True)
 	telephone_number = models.CharField(max_length=20, blank=True, null=True)
 	superior = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='subordinates')
+	added_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='employees_added')
 
 
 	def __str__(self):
