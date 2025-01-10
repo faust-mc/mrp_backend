@@ -229,7 +229,7 @@ class CombinedDataView(APIView):
         supervisor_role = roles.filter(role='Supervisors').first()
         
         if supervisor_role:
-            # Get all employees under the supervisor role
+            #get all employees under the supervisor role
             employees_under_supervisor_role = Employee.objects.filter(role=supervisor_role)
             supervisor_data = employees_under_supervisor_role.values('id', 'user__username', 'user__first_name', 'user__last_name')
 
@@ -238,7 +238,7 @@ class CombinedDataView(APIView):
             supervisor_data = []
 
 
-        # Combine all serialized data into a single response
+        #combine all serialized data into single response
         response_data = {
             "modules": module_serializer.data,
             "areas": areas,
@@ -253,7 +253,7 @@ class CombinedDataView(APIView):
         
         serializer = RoleSerializer(data=request.data)
         if serializer.is_valid():
-            serializer.save(user=request.user)  # Save the role with the current user
+            serializer.save(user=request.user)  #save the role with the current user
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
