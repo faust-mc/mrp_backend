@@ -165,3 +165,11 @@ REDIS_HOST = 'localhost'  # Replace with your Redis server's hostname or IP
 REDIS_PORT = 6379         # Default Redis port
 REDIS_DB = 0              # Redis database index (0 by default)
 REDIS_PASSWORD = None     # Add password if your Redis server requires authentication
+
+
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_USE_TLS = True
+EMAIL_PORT = 587
+EMAIL_HOST_USER = "rfcaguioa@gmail.com"
+EMAIL_HOST_PASSWORD= 'kuhh wvfq gvpq xhki'

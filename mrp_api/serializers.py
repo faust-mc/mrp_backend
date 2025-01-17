@@ -1,6 +1,6 @@
 
 from rest_framework import serializers
-from .models import Area, Departments, ModulePermissions, Modules, Submodules,Roles, Employee
+from .models import Area, ModulePermissions, Modules, Submodules,Roles, Employee, Departments
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import password_validation
@@ -41,21 +41,27 @@ class ModuleSerializer(serializers.ModelSerializer):
         return []
 
 class RoleSerializer(serializers.ModelSerializer):
+
     class Meta:
         model = Roles
-        fields = ['id', 'role'] 
+        fields = ['id', 'role']
+
+
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'username', 'email', 'first_name', 'last_name', 'is_active', 'last_login']
 
+
 class EmployeeSerializer(serializers.ModelSerializer):
+
     user = UserSerializer()
     department = serializers.StringRelatedField(allow_null=True)
     department_id = serializers.PrimaryKeyRelatedField(
         source='department', queryset=Departments.objects.all(), allow_null=True
     )
+    area = AreaSerializer(many=True)  # Directly serialize the related Area model
     role = RoleSerializer(many=True)  # Use RoleSerializer for better structure
     superior = serializers.SerializerMethodField()
     modules = serializers.SerializerMethodField()  # Combined access (modules and submodules)
@@ -66,11 +72,11 @@ class EmployeeSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'user', 'department', 'department_id', 'date_join', 'role',
             'locked', 'attempts', 'superior', 'cellphone_number', 'telephone_number',
-            'modules', 'module_permissions',
+            'modules', 'module_permissions', 'area',  # Include 'area' in the fields
         ]
 
     def get_superior(self, obj):
-        """Fetch superior details using a nested serializer instead of a manual dictionary."""
+
         if obj.superior:
             return UserSerializer(obj.superior.user).data
         return None
@@ -119,6 +125,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
 
 
+
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True)
@@ -134,3 +141,62 @@ class ChangePasswordSerializer(serializers.Serializer):
 
             raise serializers.ValidationError(e.messages)
         return value
+
+
+class ModulePermissionsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ModulePermissions
+        fields = ['id', 'name', 'codename', 'content_type_id']
+
+
+
+
+
+
+class DepartmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Departments
+        fields = ['id', 'department']  # Add necessary fields
+
+
+
+class ModulesSerializerPlain(serializers.ModelSerializer):
+    class Meta:
+        model = Modules
+        fields = ['id', 'module', 'icon', 'slug', 'path', 'components']
+
+
+
+
+
+class RolesSerializerPlain(serializers.ModelSerializer):
+    modules = ModulesSerializerPlain(many=True)  # Same as above, adjusting for relationships
+    area = AreaSerializer(many=True)
+    submodules = SubmoduleSerializer(many=True)
+    permissions = ModulePermissionsSerializer(many=True)
+    class Meta:
+        model = Roles
+        fields = ['id', 'role', 'area','permissions', 'modules', 'submodules']
+
+
+# Employee Serializer with related fields
+class EmployeeSerializerPlain(serializers.ModelSerializer):
+    department = DepartmentSerializer(read_only=True)
+    role = RolesSerializerPlain(many=True, read_only=True)
+    modules = ModulesSerializerPlain(many=True, read_only=True)
+    module_permissions = ModulePermissionsSerializer(many=True, read_only=True)
+    area = AreaSerializer(many=True, read_only=True)
+    submodules = SubmoduleSerializer(many=True, read_only=True)
+    superior = serializers.PrimaryKeyRelatedField(queryset=Employee.objects.all(), required=False)
+    added_by = serializers.StringRelatedField(read_only=True)
+    user = UserSerializer()
+
+    class Meta:
+        model = Employee
+        fields = [
+            'id', 'user', 'department', 'date_join', 'role', 'modules',
+            'module_permissions', 'area', 'submodules', 'locked', 'attempts',
+            'cellphone_number', 'telephone_number', 'superior', 'added_by'
+        ]
+
+
