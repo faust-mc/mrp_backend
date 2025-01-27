@@ -1,6 +1,6 @@
 # urls.py
 from django.urls import path
-from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView
+from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView
 
 urlpatterns = [
     path('mrp_api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
@@ -15,6 +15,7 @@ urlpatterns = [
     path('role/edit/<int:pk>/', RoleEditView.as_view(), name='role-edit'),
     path('employeesplain/<int:pk>/', EmployeeFlatDetailView.as_view(), name='employeesplain'),
     path('roleplain/<int:pk>/', RoleFlatDetailView.as_view(), name='roleplain'),
+    path('accesskey-list/', AccessKeyView.as_view(), name='accesskey-list'),
     path('for-forms/', CombinedDataView.as_view(), name='for-forms'),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
     
@@ -28,3 +29,14 @@ urlpatterns = [
 # path('store-token/', ExchangeTokenView.as_view(), name='store_token'),
 # path('get_plate_no/', PlateNumberView.as_view(), name='get_plate_no'),
 # path('change-password/', ChangePasswordView.as_view(), name='change-password'),
+#
+# queryset = queryset.order_by(order_column)
+#
+#         # Paginate queryset
+#         paginator = Paginator(queryset, length)
+#
+#         page_number = (start // length) + 1
+#
+#         try:
+#             page = paginator.page(page_number)
+#

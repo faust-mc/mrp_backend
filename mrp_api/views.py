@@ -1,23 +1,22 @@
-from django.shortcuts import render
 from rest_framework.views import APIView
-from rest_framework.generics import RetrieveAPIView, ListAPIView, ListCreateAPIView
+from rest_framework.generics import RetrieveAPIView, ListAPIView, ListCreateAPIView ,RetrieveUpdateAPIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework import status
 from django.contrib.auth.models import User
 from django.contrib.auth.hashers import make_password, check_password
 from django.db.models import Q, Value
-from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, Submodules
-from .serializers import SubmoduleSerializer, ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer
+from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, Submodules, AccessKey
+from .serializers import SubmoduleSerializer, ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer, EmployeeSerializerPlain, RolesSerializerPlain, AccessKeySerializer
 from collections import defaultdict
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import authenticate
+from django.core.mail import send_mail
+from django.http import StreamingHttpResponse
 import random
 import string
-
+from django.core.paginator import Paginator
 
 class CustomTokenObtainPairView(TokenObtainPairView):
 
@@ -80,17 +79,62 @@ class EmployeeListView(ListCreateAPIView):
     queryset = Employee.objects.all()
     serializer_class = EmployeeSerializer
 
+    def get(self, request, *args, **kwargs):
+        # Extract parameters from the DataTables request
+        draw = int(request.GET.get('draw', 1))
+        page = int(request.GET.get('page', 1))
+        length = int(request.GET.get('pageSize', 10))
+        search_value = request.GET.get('search', '')
+        order_column = request.GET.get('sortColumnIndex', "user__first_name")
+        order_direction = request.GET.get('sortDirection', 'asc')
+        offset = (page - 1) * length
+
+        if order_direction == 'desc':
+            order_column = f"-{order_column}"
+
+        queryset = self.queryset
+        if search_value:
+            queryset = queryset.filter(
+                Q(user__first_name__icontains=search_value) |
+                Q(user__last_name__icontains=search_value) |
+                Q(user__email__icontains=search_value) |
+                Q(user__employee__id__icontains=search_value) |
+                Q(user__employee__role__role__icontains=search_value) |
+                Q(user__employee__superior__user__first_name__icontains=search_value) |
+                Q(user__employee__superior__user__last_name__icontains=search_value) |
+                Q(user__email__icontains=search_value) |
+                Q(user__last_login__icontains=search_value) |
+                Q(user__employee__cellphone_number__icontains=search_value) |
+                Q(user__is_active__icontains=search_value)
+            ).distinct()
+
+        for_pagination = Paginator(queryset, length)
+        queryset = queryset.order_by(order_column)[offset:offset + (length)]
+        serializer = self.serializer_class(queryset, many=True)
+        response_data = {
+            "draw": draw,
+            "recordsTotal": self.queryset.count(),
+            "recordsFiltered": 1,
+            "page_count": for_pagination.count,
+            "page_num_pages": for_pagination.num_pages,
+            "data": serializer.data,
+        }
+
+        return Response(response_data, status=status.HTTP_200_OK)
+
+
     def create(self, request, *args, **kwargs):
         data = request.data
 
         generated_password = ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(6))
 
         hashed_password = make_password(generated_password)
-
+        generated_username = data.get("first_name")+data.get("last_name")
+        user_email = data.get("email")
 
         user_data = {
-            "username": data.get("first_name")+data.get("last_name"),
-            "email": data.get("email"),
+            "username": generated_username,
+            "email": user_email,
             "first_name": data.get("first_name"),
             "last_name": data.get("last_name"),
             "password": hashed_password,
@@ -116,43 +160,52 @@ class EmployeeListView(ListCreateAPIView):
             )
 
             if "role" in data:
-                for r in data['role']:
-                    print(1)
-                    print("------")
-                    role, created = Roles.objects.get_or_create(role=r)
-                    employee.role.add(role)
+                role_ids = [r['id'] for r in data['role']]
+                roles = Roles.objects.filter(pk__in=role_ids)
+                employee.role.add(*roles)
+
 
 
             # assign modules
             if "modules" in data:
-                modules = Modules.objects.filter(id__in=data["modules"])
+                modules = Modules.objects.filter(module__in=data["modules"])
                 employee.modules.add(*modules)
 
-            # assign submodules
             if "submodules" in data:
-                submodules = Submodules.objects.filter(id__in=data["submodules"])
-                modules = set(submodule.module for submodule in submodules)
-            for module in modules:
-                employee.modules.add(module)
+                submodules = Submodules.objects.filter(submodule__in=data["modules"])
+                modules = {submodule.module for submodule in submodules}
+
+            if modules:
+                employee.modules.add(*modules)
+
+            if submodules.exists():
                 employee.submodules.add(*submodules)
+
             # assign areas
             if "area" in data:
-                areas = Area.objects.filter(location__in=data["area"])
+                areas = Area.objects.filter(location__in=[item['value'] for item in data['area']])
                 employee.area.add(*areas)
 
             # ssign module permissions
             if "permissions" in data:
-                for module_name, actions in data["permissions"].items():
-                    for action, has_permission in actions.items():
-                        
-                        if has_permission:
-                            permission = ModulePermissions.objects.filter(
-                                codename=action
-                            ).first()
-                            if permission:
-                                employee.module_permissions.add(permission)
+                permission_codenames = [
+                    action
+                    for module_name, actions in data["permissions"].items()
+                    for action, has_permission in actions.items() if has_permission
+                ]
+
+                permissions = ModulePermissions.objects.filter(codename__in=permission_codenames)
+                employee.module_permissions.add(*permissions)
+
 
             employee.save()
+            # send_mail(
+            #     "New User",
+            #     f"Hi. \nYour Password is {generated_password}",
+            #     "rfcaguioa@gmail.com",
+            #     [user_email],
+            #     fail_silently=False,
+            # )
             return_data = {"data": EmployeeSerializer(employee).data, "message": f"Default Password is {generated_password}. Please save it immediatly as this window will close in "}
 
             return Response(return_data, status=status.HTTP_201_CREATED
@@ -209,7 +262,188 @@ class RoleListCreate(ListCreateAPIView):
         return Roles.objects.all()
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        role_instance = serializer.save()
+
+        data = self.request.data
+
+        if 'area' in data:
+            areas = Area.objects.filter(location__in=data['area'])
+            role_instance.area.set(areas)
+
+        if 'modules' in data:
+            modules = Modules.objects.filter(id__in=data['modules'])
+            role_instance.modules.set(modules)
+
+        if 'submodules' in data:
+            submodules = Submodules.objects.filter(id__in=data['submodules'])
+            role_instance.submodules.set(submodules)
+            modules = set(submodule.module for submodule in submodules)
+        for module in modules:
+            role_instance.modules.add(module)
+            role_instance.submodules.add(*submodules)
+
+        if 'permissions' in data:
+            permissions_data = data['permissions']
+            permissions = []
+            for key, perm_values in permissions_data.items():
+                for perm_name, has_permission in perm_values.items():
+                    if has_permission:
+                        permission = ModulePermissions.objects.filter(codename=perm_name).first()
+                        if permission:
+                            permissions.append(permission)
+
+            role_instance.permissions.set(permissions)
+        role_instance.save()
+
+
+
+class EmployeeEditView(RetrieveUpdateAPIView):
+    queryset = Employee.objects.all()
+    serializer_class = EmployeeSerializer
+
+    def update(self, request, *args, **kwargs):
+        data = request.data
+
+        # Generate the username from first and last names
+        generated_username = data.get("first_name") + data.get("last_name")
+        user_email = data.get("email")
+
+        user_data = {
+            "username": generated_username,
+            "email": user_email,
+            "first_name": data.get("first_name"),
+            "last_name": data.get("last_name"),
+        }
+
+        # Create or update the employee
+        try:
+            employee = Employee.objects.filter(id=kwargs.get("pk")).first()
+
+            if not employee:
+                return Response(
+                    {"error": "Employee not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            employee.user = employee.user
+
+            employee.department = Departments.objects.get(id=data.get("department"))
+
+            employee.cellphone_number = data.get("mobile_number")
+
+            employee.telephone_number = data.get("telephone_number")
+
+            employee.superior = Employee.objects.filter(id=int(data.get("superior"))).first()
+
+            employee.added_by = request.user
+
+            # Save the employee before adding roles, modules, etc.
+            employee.save()
+
+            # Assign roles
+            if "role" in data:
+                employee.role.clear()
+                for r in data['role']:
+                    role = Roles.objects.get(pk=r['id'])
+                    employee.role.add(role)
+
+            # assign modules
+            if "modules" in data:
+                modules = Modules.objects.filter(module__in=data["modules"])
+                employee.modules.set(modules)
+
+            # assign submodules
+            if "submodules" in data:
+                submodules = Submodules.objects.filter(submodule__in=  data["modules"])
+                modules = set(submodule.module for submodule in submodules)
+                employee.submodules.set(submodules)
+
+            for module in modules:
+                employee.modules.add(module)
+
+
+            # assign areas
+            if "area" in data:
+                employee.area.clear()
+                areas = Area.objects.filter(location__in=[item['value'] for item in data['area']])
+
+                employee.area.add(*areas)
+
+            # ssign module permissions
+            if "permissions" in data:
+                employee.module_permissions.clear()
+                for module_name, actions in data["permissions"].items():
+                    for action, has_permission in actions.items():
+
+                        if has_permission:
+                            permission = ModulePermissions.objects.filter(
+                                codename=action
+                            ).first()
+                            if permission:
+                                employee.module_permissions.add(permission)
+            employee.save()
+
+            # Return the updated employee data
+            return Response(EmployeeSerializer(employee).data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to update employee. Details: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+
+class RoleEditView(RetrieveUpdateAPIView):
+    queryset = Roles.objects.all()
+    serializer_class = RolesSerializerPlain
+
+    def update(self, request, pk,*args, **kwargs):
+
+        try:
+            data = request.data
+            role_instance = Roles.objects.get(id=pk)
+
+            if "modules" in data:
+                    modules = Modules.objects.filter(module__in=data["modules"])
+                    role_instance.modules.set(modules)
+
+            if "submodules" in data:
+                submodules = Submodules.objects.filter(submodule__in=  data["modules"])
+                modules = set(submodule.module for submodule in submodules)
+
+                role_instance.submodules.set(submodules)
+
+                for module in modules:
+                    role_instance.modules.add(module)
+
+            if "area" in data:
+                role_instance.area.clear()
+                areas = Area.objects.filter(location__in=[item['value'] for item in data['area']])
+
+                role_instance.area.add(*areas)
+
+            if "permissions" in data:
+                role_instance.permissions.clear()
+                for module_name, actions in data["permissions"].items():
+                    for action, has_permission in actions.items():
+                        if has_permission:
+                            permission = ModulePermissions.objects.filter(
+                                    codename=action
+                                ).first()
+                            if permission:
+                                    role_instance.permissions.add(permission)
+            role_instance.save()
+            return Response(
+                    RolesSerializerPlain(role_instance).data,
+                    status=status.HTTP_200_OK
+                )
+        except Roles.DoesNotExist:
+                return Response(
+                    {"detail": "Role not found."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
         
 
 class CombinedDataView(APIView):
@@ -222,8 +456,8 @@ class CombinedDataView(APIView):
         submodules = Submodules.objects.all()
         modules = list(modules_with_no_submodules) + list(submodules)
         module_serializer = ModuleSerializer(modules, many=True)
-        areas = Area.objects.values('location').distinct()  
-        area_serializer = AreaSerializer(areas, many=True)
+        areas = Area.objects.all().values()
+       # area_serializer = AreaSerializer(areas, many=True)
         departments = Departments.objects.all()
         dept_serializer = DepartmentsSerializer(departments, many=True)
         roles = Roles.objects.all()
@@ -234,7 +468,7 @@ class CombinedDataView(APIView):
         if supervisor_role:
             #get all employees under the supervisor role
             employees_under_supervisor_role = Employee.objects.filter(role=supervisor_role)
-            supervisor_data = employees_under_supervisor_role.values('id', 'user__username', 'user__first_name', 'user__last_name')
+            supervisor_data = employees_under_supervisor_role.values('user__id', 'user__username', 'user__first_name', 'user__last_name')
 
 
         else:
@@ -279,6 +513,40 @@ class ChangePasswordView(APIView):
             user.save()
 
             return Response({"detail": "Password changed successfully."}, status=status.HTTP_200_OK)
-        print(serializer.errors)
+
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+class EmployeeFlatDetailView(APIView):
+
+    def get(self, request, pk):
+        try:
+            employee = Employee.objects.get(pk=pk)
+        except Employee.DoesNotExist:
+            return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = EmployeeSerializerPlain(employee)
+        return Response(serializer.data)
+
+
+class RoleFlatDetailView(APIView):
+
+    def get(self, request, pk):
+        try:
+            role = Roles.objects.get(pk=pk)
+        except Roles.DoesNotExist:
+            return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = RolesSerializerPlain(role)
+        return Response(serializer.data)
+
+
+class AccessKeyView(ListAPIView):
+
+    def get(self, request):
+        access_key = AccessKey.objects.all()
+        serialized_key = AccessKeySerializer(access_key, many=True)
+
+        return Response(serialized_key.data)

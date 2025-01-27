@@ -1,6 +1,6 @@
 
 from rest_framework import serializers
-from .models import Area, ModulePermissions, Modules, Submodules,Roles, Employee, Departments
+from .models import Area, ModulePermissions, Modules, Submodules,Roles, Employee, Departments, AccessKey
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import password_validation
@@ -11,6 +11,12 @@ class SubmoduleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Submodules
         fields = ['id', 'submodule', 'slug', 'components']
+
+
+class AccessKeySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AccessKey
+        fields = '__all__'
 
 
 class DepartmentsSerializer(serializers.ModelSerializer):
@@ -179,7 +185,7 @@ class RolesSerializerPlain(serializers.ModelSerializer):
         fields = ['id', 'role', 'area','permissions', 'modules', 'submodules']
 
 
-# Employee Serializer with related fields
+
 class EmployeeSerializerPlain(serializers.ModelSerializer):
     department = DepartmentSerializer(read_only=True)
     role = RolesSerializerPlain(many=True, read_only=True)

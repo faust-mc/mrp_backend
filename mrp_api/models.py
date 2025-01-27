@@ -80,6 +80,8 @@ class Roles(models.Model):
 	area = models.ManyToManyField(Area, null=True, blank=True)
 	modules = models.ManyToManyField(Modules, blank=True)
 	submodules = models.ManyToManyField(Submodules, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
 
 	def __str__(self):
 		 return self.role
@@ -100,7 +102,20 @@ class Employee(models.Model):
 	telephone_number = models.CharField(max_length=20, blank=True, null=True)
 	superior = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='subordinates')
 	added_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='employees_added')
+	created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
 
 
 	def __str__(self):
 		return self.user.username
+
+
+class AccessKey(models.Model):
+	access_key = models.CharField(max_length=15)
+	access_name = models.CharField(max_length=30)
+	access_description = models.TextField(max_length=100)
+	created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
+
+	def __str__(self):
+		return self.access_key
