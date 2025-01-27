@@ -77,7 +77,7 @@ class Submodules(models.Model):
 class Roles(models.Model):
 	role = models.CharField(max_length=20)
 	permissions = models.ManyToManyField(ModulePermissions, blank=True)
-	area = models.ManyToManyField(Area, null=True, blank=True)
+	area = models.ManyToManyField(Area, blank=True)
 	modules = models.ManyToManyField(Modules, blank=True)
 	submodules = models.ManyToManyField(Submodules, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
@@ -91,11 +91,11 @@ class Employee(models.Model):
 	user = models.OneToOneField(User, on_delete=models.CASCADE)
 	department = models.ForeignKey(Departments, on_delete=models.CASCADE, blank=True, null=True)
 	date_join = models.DateTimeField(null=True, blank=True)
-	role = models.ManyToManyField(Roles, null=True, blank=True)
+	role = models.ManyToManyField(Roles,  blank=True)
 	modules = models.ManyToManyField(Modules)
-	module_permissions = models.ManyToManyField(ModulePermissions, null=True, blank=True)
-	area = models.ManyToManyField(Area, null=True, blank=True)
-	submodules = models.ManyToManyField(Submodules,blank=True, null=True)
+	module_permissions = models.ManyToManyField(ModulePermissions, blank=True)
+	area = models.ManyToManyField(Area, blank=True)
+	submodules = models.ManyToManyField(Submodules,blank=True)
 	locked = models.IntegerField(default=0)
 	attempts = models.IntegerField(default=0)
 	cellphone_number = models.CharField(max_length=20, blank=True, null=True)
@@ -104,7 +104,6 @@ class Employee(models.Model):
 	added_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='employees_added')
 	created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
 	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
-
 
 	def __str__(self):
 		return self.user.username

@@ -9,7 +9,7 @@ import datetime
 import json
 from django.core.serializers.json import DjangoJSONEncoder
 
-permissions = ['add', 'view', 'update', 'delete', 'report']
+permissions = ['add', 'view', 'edit', 'delete', 'report']
 
 @receiver(post_save)
 def dynamic_permission_signal(sender, instance, created, **kwargs):
