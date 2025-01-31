@@ -32,45 +32,49 @@ class Departments(models.Model):
 		return self.department
 
 
-class ModulePermissions(models.Model):
-	name = models.CharField(max_length=50)
-	codename = models.CharField(max_length=80)
-	content_type_id = models.IntegerField()
 
-	def __str__(self):
-		return self.name
 
 
 class Modules(models.Model):
-	home = "#home"
-	speedometer2 = '#speedometer2'
-	table = '#table'
-	grid = '#grid'
-	module_logo = [
-		("#home", home),
-		("#speedometer2", speedometer2),
-		("#table", table),
-		("#grid", grid)
-	]
-	module = models.CharField(max_length=100)
-	icon = models.CharField(max_length = 100, blank= True, null = True, choices=module_logo,default=table)
-	slug = models.CharField(max_length = 20, blank=True, null=True)
-	path = models.CharField(max_length=20, blank=True, null=True)
-	components = models.CharField(max_length = 20, blank=True, null=True)
+    # Choices for module icons
+    MODULE_LOGO_CHOICES = [
+        ("#home", "Home"),
+        ("#speedometer2", "Speedometer"),
+        ("#table", "Table"),
+        ("#grid", "Grid"),
+    ]
+
+    module = models.CharField(max_length=100)
+    icon = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        choices=MODULE_LOGO_CHOICES,
+        default="#table"
+    )
+    slug = models.CharField(max_length=20, blank=True, null=True)
+    path = models.CharField(max_length=20, blank=True, null=True)
+    components = models.CharField(max_length=20, blank=True, null=True)
+
+    # Self-referential ForeignKey for parent-child relationship
+    parent_module = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='submodules'
+    )
+
+    def __str__(self):
+        return self.module
+
+class ModulePermissions(models.Model):
+	name = models.CharField(max_length=50)
+	codename = models.CharField(max_length=80)
+	module = models.ForeignKey(Modules, on_delete=models.CASCADE, blank=True, null=True)
 
 	def __str__(self):
-		return self.module
-
-
-class Submodules(models.Model):
-	module = models.ForeignKey(Modules, on_delete=models.CASCADE)
-	submodule = models.CharField(max_length = 100)
-	slug = models.CharField(max_length = 20, blank=True, null=True)
-	components = models.CharField(max_length = 20, blank=True, null=True)
-
-
-	def __str__(self):
-		return f'{self.submodule}-{self.module}'
+		return self.name
 
 
 
@@ -79,7 +83,6 @@ class Roles(models.Model):
 	permissions = models.ManyToManyField(ModulePermissions, blank=True)
 	area = models.ManyToManyField(Area, blank=True)
 	modules = models.ManyToManyField(Modules, blank=True)
-	submodules = models.ManyToManyField(Submodules, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
 	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
 
@@ -91,11 +94,10 @@ class Employee(models.Model):
 	user = models.OneToOneField(User, on_delete=models.CASCADE)
 	department = models.ForeignKey(Departments, on_delete=models.CASCADE, blank=True, null=True)
 	date_join = models.DateTimeField(null=True, blank=True)
-	role = models.ManyToManyField(Roles,  blank=True)
+	role = models.ForeignKey(Roles,  on_delete = models.CASCADE,blank=True, null=True)
 	modules = models.ManyToManyField(Modules)
 	module_permissions = models.ManyToManyField(ModulePermissions, blank=True)
 	area = models.ManyToManyField(Area, blank=True)
-	submodules = models.ManyToManyField(Submodules,blank=True)
 	locked = models.IntegerField(default=0)
 	attempts = models.IntegerField(default=0)
 	cellphone_number = models.CharField(max_length=20, blank=True, null=True)

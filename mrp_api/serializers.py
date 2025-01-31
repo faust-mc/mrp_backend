@@ -1,16 +1,13 @@
 
 from rest_framework import serializers
-from .models import Area, ModulePermissions, Modules, Submodules,Roles, Employee, Departments, AccessKey
+from .models import Area, ModulePermissions, Modules, Roles, Employee, Departments, AccessKey
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import password_validation
 from rest_framework import serializers
 
 
-class SubmoduleSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Submodules
-        fields = ['id', 'submodule', 'slug', 'components']
+
 
 
 class AccessKeySerializer(serializers.ModelSerializer):
@@ -31,20 +28,18 @@ class AreaSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class ModuleSerializer(serializers.ModelSerializer):
-   
     submodules = serializers.SerializerMethodField()
 
     class Meta:
         model = Modules
-        fields = ['id', 'module', 'slug', 'icon', 'path', 'components', 'submodules']
+        fields = ['id', 'module', 'icon', 'slug', 'path', 'components', 'submodules']
 
     def get_submodules(self, obj):
-        employee = self.context.get('employee')  # Get the Employee object from the context
-        if employee:
-            # Get the submodules that are linked to this employee's access_submodules for this module
-            submodules = employee.access_submodules.filter(module=obj)
-            return SubmoduleSerializer(submodules, many=True).data
-        return []
+        # Recursively serialize submodules
+        submodules = obj.submodules.all()
+        return ModuleSerializer(submodules, many=True).data
+
+
 
 class RoleSerializer(serializers.ModelSerializer):
 
@@ -60,74 +55,95 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'email', 'first_name', 'last_name', 'is_active', 'last_login']
 
 
-class EmployeeSerializer(serializers.ModelSerializer):
-
+class EmployeeMinimalSerializer(serializers.ModelSerializer):
     user = UserSerializer()
-    department = serializers.StringRelatedField(allow_null=True)
-    department_id = serializers.PrimaryKeyRelatedField(
-        source='department', queryset=Departments.objects.all(), allow_null=True
-    )
-    area = AreaSerializer(many=True)  # Directly serialize the related Area model
-    role = RoleSerializer(many=True)  # Use RoleSerializer for better structure
-    superior = serializers.SerializerMethodField()
-    modules = serializers.SerializerMethodField()  # Combined access (modules and submodules)
-    module_permissions = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
+        fields = ['id', 'user']
+
+
+
+class EmployeeSerializer(serializers.ModelSerializer):
+    user = UserSerializer()
+    role = RoleSerializer()
+    superior = EmployeeMinimalSerializer()
+    class Meta:
+        model = Employee
         fields = [
-            'id', 'user', 'department', 'department_id', 'date_join', 'role',
-            'locked', 'attempts', 'superior', 'cellphone_number', 'telephone_number',
-            'modules', 'module_permissions', 'area',  # Include 'area' in the fields
+            'user',
+            'id',
+            'department',
+            'date_join',
+            'role',
+            'modules',
+            'area',
+            'locked',
+            'attempts',
+            'cellphone_number',
+            'telephone_number',
+            'superior',
+            'module_permissions'
         ]
+        depth = 1  # Include nested details
 
-    def get_superior(self, obj):
 
-        if obj.superior:
-            return UserSerializer(obj.superior.user).data
-        return None
 
-    def get_module_permissions(self, obj):
-        """Fetch combined permissions from employee and roles."""
-        employee_permissions = obj.module_permissions.all()
-        role_permissions = ModulePermissions.objects.filter(roles__in=obj.role.all())
-        combined_permissions = (employee_permissions | role_permissions).distinct()
+class UserDetailSerializer(serializers.ModelSerializer):
+    employee_details = serializers.SerializerMethodField()
+    accessible_modules = serializers.SerializerMethodField()
 
-        return [
-            {
-                "id": perm.id,
-                "name": perm.name,
-                "codename": perm.codename,
-                "content_type_id": perm.content_type_id,
-            }
-            for perm in combined_permissions
-        ]
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'employee_details', 'accessible_modules']
 
-    def get_modules(self, obj):
-        """Combine modules from both employee and roles, including associated submodules."""
-        employee_modules = obj.modules.all()
-        role_modules = Modules.objects.filter(roles__in=obj.role.all())
-        combined_modules = (employee_modules | role_modules).distinct()
+    def get_employee_details(self, obj):
+        try:
+            employee = Employee.objects.get(user=obj)
+            return EmployeeSerializer(employee).data
+        except Employee.DoesNotExist:
+            return None
 
-        result = []
-        for module in combined_modules:
-            employee_submodules = obj.submodules.filter(module=module)
-            role_submodules = Submodules.objects.filter(
-                module=module, roles__in=obj.role.all()
-            )
-            combined_submodules = (employee_submodules | role_submodules).distinct()
+    def get_accessible_modules(self, obj):
+        try:
+            employee = Employee.objects.get(user=obj)
 
-            result.append({
-                "id": module.id,
-                "module": module.module,
-                "icon": module.icon,
-                "slug": module.slug,
-                "path": module.path,
-                "components": module.components,
-                "submodules": SubmoduleSerializer(combined_submodules, many=True).data,
-            })
+            # Get the direct modules assigned to the employee
+            direct_modules = employee.modules.all()
+            print()
+            print(direct_modules)
 
-        return result
+            # Recursively build the module hierarchy with their submodules
+            def build_module_hierarchy(module):
+                # Find submodules that are linked to this module as parent
+                submodules = Modules.objects.filter(parent_module=module, id__in=employee.modules.all())
+
+                module_data = {
+                    "id": module.id,
+                    "module": module.module,
+                    "icon": module.icon,
+                    "slug": module.slug,
+                    "path": module.path,
+                    "components": module.components,
+                    "submodules": [build_module_hierarchy(submodule) for submodule in submodules]
+                }
+                return module_data
+
+            # Get the root modules that the user has access to
+            accessible_modules = []
+            for module in direct_modules:
+                print(module)
+                # If the module has no parent, treat it as a root module and build its hierarchy
+                if module.parent_module is None:
+                    accessible_modules.append(build_module_hierarchy(module))
+
+            return accessible_modules
+
+        except Employee.DoesNotExist:
+            return []
+
+
+
 
 
 
@@ -150,9 +166,10 @@ class ChangePasswordSerializer(serializers.Serializer):
 
 
 class ModulePermissionsSerializer(serializers.ModelSerializer):
+    module = ModuleSerializer()
     class Meta:
         model = ModulePermissions
-        fields = ['id', 'name', 'codename', 'content_type_id']
+        fields = ['id', 'name', 'codename', 'module']
 
 
 
@@ -169,30 +186,40 @@ class DepartmentSerializer(serializers.ModelSerializer):
 class ModulesSerializerPlain(serializers.ModelSerializer):
     class Meta:
         model = Modules
-        fields = ['id', 'module', 'icon', 'slug', 'path', 'components']
+        fields = ['id', 'module', 'icon', 'slug', 'path', 'components', 'parent_module']
 
 
+class ModulesSerializerParent(ModulesSerializerPlain):
+    parent_module = serializers.SerializerMethodField()
+
+    class Meta(ModulesSerializerPlain.Meta):
+        fields = ModulesSerializerPlain.Meta.fields + ['parent_module']
+
+    def get_parent_module(self, obj):
+        if obj.parent_module:
+            return {"id": obj.parent_module.id, "module": obj.parent_module.module}
+        return None
 
 
 
 class RolesSerializerPlain(serializers.ModelSerializer):
     modules = ModulesSerializerPlain(many=True)  # Same as above, adjusting for relationships
     area = AreaSerializer(many=True)
-    submodules = SubmoduleSerializer(many=True)
+
     permissions = ModulePermissionsSerializer(many=True)
     class Meta:
         model = Roles
-        fields = ['id', 'role', 'area','permissions', 'modules', 'submodules']
+        fields = ['id', 'role', 'area','permissions', 'modules']
 
 
 
 class EmployeeSerializerPlain(serializers.ModelSerializer):
     department = DepartmentSerializer(read_only=True)
-    role = RolesSerializerPlain(many=True, read_only=True)
+    role = RolesSerializerPlain()
     modules = ModulesSerializerPlain(many=True, read_only=True)
     module_permissions = ModulePermissionsSerializer(many=True, read_only=True)
     area = AreaSerializer(many=True, read_only=True)
-    submodules = SubmoduleSerializer(many=True, read_only=True)
+
     superior = serializers.PrimaryKeyRelatedField(queryset=Employee.objects.all(), required=False)
     added_by = serializers.StringRelatedField(read_only=True)
     user = UserSerializer()
@@ -201,7 +228,7 @@ class EmployeeSerializerPlain(serializers.ModelSerializer):
         model = Employee
         fields = [
             'id', 'user', 'department', 'date_join', 'role', 'modules',
-            'module_permissions', 'area', 'submodules', 'locked', 'attempts',
+            'module_permissions', 'area', 'locked', 'attempts',
             'cellphone_number', 'telephone_number', 'superior', 'added_by'
         ]
 

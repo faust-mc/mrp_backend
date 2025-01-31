@@ -7,8 +7,8 @@ from rest_framework import status
 from django.contrib.auth.models import User
 from django.contrib.auth.hashers import make_password, check_password
 from django.db.models import Q, Value
-from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, Submodules, AccessKey
-from .serializers import SubmoduleSerializer, ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer, EmployeeSerializerPlain, RolesSerializerPlain, AccessKeySerializer
+from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, AccessKey
+from .serializers import ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer, EmployeeSerializerPlain, RolesSerializerPlain, AccessKeySerializer, UserDetailSerializer, ModulesSerializerPlain, ModulesSerializerParent
 from collections import defaultdict
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import authenticate
@@ -40,10 +40,9 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             return Response({"error": "User is locked. Please contact administrator."},
                             status=status.HTTP_403_FORBIDDEN)
 
-        #authenticate the user
         authenticated_user = authenticate(username=username, password=password)
         if authenticated_user:
-            #reset attempts and generate JWT tokens if login is successful
+
             employee.attempts = 0
             employee.save()
 
@@ -80,7 +79,7 @@ class EmployeeListView(ListCreateAPIView):
     serializer_class = EmployeeSerializer
 
     def get(self, request, *args, **kwargs):
-        # Extract parameters from the DataTables request
+
         draw = int(request.GET.get('draw', 1))
         page = int(request.GET.get('page', 1))
         length = int(request.GET.get('pageSize', 10))
@@ -99,7 +98,7 @@ class EmployeeListView(ListCreateAPIView):
                 Q(user__last_name__icontains=search_value) |
                 Q(user__email__icontains=search_value) |
                 Q(user__employee__id__icontains=search_value) |
-                Q(user__employee__role__role__icontains=search_value) |
+
                 Q(user__employee__superior__user__first_name__icontains=search_value) |
                 Q(user__employee__superior__user__last_name__icontains=search_value) |
                 Q(user__email__icontains=search_value) |
@@ -126,30 +125,24 @@ class EmployeeListView(ListCreateAPIView):
     def create(self, request, *args, **kwargs):
         data = request.data
 
-        generated_password = ''.join(random.SystemRandom().choice(string.ascii_uppercase + string.digits) for _ in range(6))
-
-        hashed_password = make_password(generated_password)
-        generated_username = data.get("first_name")+data.get("last_name")
-        user_email = data.get("email")
-
-        user_data = {
-            "username": generated_username,
-            "email": user_email,
-            "first_name": data.get("first_name"),
-            "last_name": data.get("last_name"),
-            "password": hashed_password,
-        }
-        user, created = User.objects.get_or_create(
-            username=user_data["username"], defaults=user_data
-        )
-        if not created:
-            return Response(
-                {"error": "User with this email already exists."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        #create the employee
         try:
+            generated_password = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+            hashed_password = make_password(generated_password)
+            generated_username = f"{data.get('first_name')}{data.get('last_name')}"
+
+            user_email = data.get("email")
+            user_data = {
+                "username": generated_username,
+                "email": user_email,
+                "first_name": data.get("first_name"),
+                "last_name": data.get("last_name"),
+                "password": hashed_password,
+            }
+
+            user, created = User.objects.get_or_create(username=user_data["username"], defaults=user_data)
+            if not created:
+                return Response({"error": "User with this email already exists."}, status=status.HTTP_400_BAD_REQUEST)
+
             employee = Employee.objects.create(
                 user=user,
                 department=Departments.objects.get(id=data["department"]),
@@ -160,61 +153,60 @@ class EmployeeListView(ListCreateAPIView):
             )
 
             if "role" in data:
-                role_ids = [r['id'] for r in data['role']]
-                roles = Roles.objects.filter(pk__in=role_ids)
-                employee.role.add(*roles)
+                role = Roles.objects.get(id=int(data['role']))
+                employee.role = role
 
-
-
-            # assign modules
-            if "modules" in data:
-                modules = Modules.objects.filter(module__in=data["modules"])
-                employee.modules.add(*modules)
-
-            if "submodules" in data:
-                submodules = Submodules.objects.filter(submodule__in=data["modules"])
-                modules = {submodule.module for submodule in submodules}
-
-            if modules:
-                employee.modules.add(*modules)
-
-            if submodules.exists():
-                employee.submodules.add(*submodules)
-
-            # assign areas
             if "area" in data:
                 areas = Area.objects.filter(location__in=[item['value'] for item in data['area']])
                 employee.area.add(*areas)
 
-            # ssign module permissions
             if "permissions" in data:
-                permission_codenames = [
-                    action
-                    for module_name, actions in data["permissions"].items()
-                    for action, has_permission in actions.items() if has_permission
-                ]
+                permission_codenames = [actions for actions, has_permission in data["permissions"].items() if has_permission]
 
                 permissions = ModulePermissions.objects.filter(codename__in=permission_codenames)
                 employee.module_permissions.add(*permissions)
 
 
+                def get_module_hierarchy(module):
+                    hierarchy = []
+                    current_module = module
+                    while current_module:
+                        hierarchy.append(current_module)
+                        current_module = current_module.parent_module
+                    return hierarchy
+
+
+                modules_to_add = set()
+                for permission in permissions:
+
+                    module = permission.module
+                    if module:
+                        module_hierarchy = get_module_hierarchy(module)
+                        modules_to_add.update(module_hierarchy)
+
+
+
+                employee.modules.add(*modules_to_add)
+
             employee.save()
+
+            # Email logic (optional - commented out)
             # send_mail(
             #     "New User",
             #     f"Hi. \nYour Password is {generated_password}",
-            #     "rfcaguioa@gmail.com",
+            #     "your_email@example.com",
             #     [user_email],
             #     fail_silently=False,
             # )
-            return_data = {"data": EmployeeSerializer(employee).data, "message": f"Default Password is {generated_password}. Please save it immediatly as this window will close in "}
 
-            return Response(return_data, status=status.HTTP_201_CREATED
-            )
+            return_data = {
+                "data": EmployeeSerializer(employee).data,
+                "message": f"Default Password is {generated_password}. Please save it immediately as this window will close soon.",
+            }
+            return Response(return_data, status=status.HTTP_201_CREATED)
+
         except Exception as e:
-            return Response(
-                {"error": f"Failed to create employee. Details: {str(e)}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class EmployeeDetailView(APIView):
@@ -222,21 +214,21 @@ class EmployeeDetailView(APIView):
 
     def get(self, request, pk):
         try:
+
             user = User.objects.get(pk=pk)
-            employee = user.employee
-            serializer = EmployeeSerializer(employee)
+
+            serializer = UserDetailSerializer(user)
             return Response(serializer.data)
+
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
-        except Employee.DoesNotExist:
-            return Response({"error": "Employee data not found for this user"}, status=404)
 
 
 
 class CombinedModuleListView(APIView):
     def get(self, request):
         modules_with_no_submodules = Modules.objects.filter(submodules__isnull=True)
-        submodules = Submodules.objects.all()
+        submodules = Modules.objects.all()
       
         modules = list(modules_with_no_submodules) + list(submodules)
        
@@ -265,34 +257,56 @@ class RoleListCreate(ListCreateAPIView):
         role_instance = serializer.save()
 
         data = self.request.data
-
         if 'area' in data:
-            areas = Area.objects.filter(location__in=data['area'])
-            role_instance.area.set(areas)
+            areas = Area.objects.filter(location__in=[item['value'] for item in data['area']])
+            role_instance.area.add(*areas)
 
-        if 'modules' in data:
-            modules = Modules.objects.filter(id__in=data['modules'])
-            role_instance.modules.set(modules)
 
-        if 'submodules' in data:
-            submodules = Submodules.objects.filter(id__in=data['submodules'])
-            role_instance.submodules.set(submodules)
-            modules = set(submodule.module for submodule in submodules)
-        for module in modules:
-            role_instance.modules.add(module)
-            role_instance.submodules.add(*submodules)
+        if "permissions" in data:
+                permission_codenames = [actions for actions, has_permission in data["permissions"].items() if has_permission]
+                permissions = ModulePermissions.objects.filter(codename__in=permission_codenames)
+                role_instance.permissions.add(*permissions)
 
-        if 'permissions' in data:
-            permissions_data = data['permissions']
-            permissions = []
-            for key, perm_values in permissions_data.items():
-                for perm_name, has_permission in perm_values.items():
-                    if has_permission:
-                        permission = ModulePermissions.objects.filter(codename=perm_name).first()
-                        if permission:
-                            permissions.append(permission)
+                def get_module_hierarchy(module):
+                    hierarchy = []
+                    current_module = module
+                    while current_module:
+                        hierarchy.append(current_module)
+                        current_module = current_module.parent_module
+                    return hierarchy
 
-            role_instance.permissions.set(permissions)
+                modules_to_add = set()
+                for permission in permissions:
+
+                    module = permission.module
+                    if module:
+                        module_hierarchy = get_module_hierarchy(module)
+                        modules_to_add.update(module_hierarchy)
+
+                role_instance.modules.add(*modules_to_add)
+
+        if 'copy_area' in data and data['copy_area']:
+            for role_data in data['roles']:
+                role = Roles.objects.get(id=role_data['id'])
+                role.area.clear()
+                role.area.add(*areas)
+
+        if 'copy_permissions' in data and data['copy_permissions']:
+            for role_data in data['roles']:
+                role = Roles.objects.get(id=role_data['id'])
+                role.permissions.clear()
+                role.permissions.add(*permissions)
+
+                modules_to_add_for_roles = set()
+                for permission in permissions:
+                    module = permission.module
+                    if module:
+                        module_hierarchy = get_module_hierarchy(module)
+                        modules_to_add_for_roles.update(module_hierarchy)
+
+                role.modules.clear()
+                role.modules.add(*modules_to_add_for_roles)
+
         role_instance.save()
 
 
@@ -304,86 +318,55 @@ class EmployeeEditView(RetrieveUpdateAPIView):
     def update(self, request, *args, **kwargs):
         data = request.data
 
-        # Generate the username from first and last names
-        generated_username = data.get("first_name") + data.get("last_name")
-        user_email = data.get("email")
-
-        user_data = {
-            "username": generated_username,
-            "email": user_email,
-            "first_name": data.get("first_name"),
-            "last_name": data.get("last_name"),
-        }
-
-        # Create or update the employee
         try:
-            employee = Employee.objects.filter(id=kwargs.get("pk")).first()
 
-            if not employee:
-                return Response(
-                    {"error": "Employee not found."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+            employee = self.get_object()
+            user = employee.user
 
-            employee.user = employee.user
+            user.first_name = data.get("first_name", user.first_name)
+            user.last_name = data.get("last_name", user.last_name)
+            user.email = data.get("email", user.email)
+            user.save()
 
-            employee.department = Departments.objects.get(id=data.get("department"))
+            employee.department = Departments.objects.get(id=data.get("department", employee.department.id))
+            employee.cellphone_number = data.get("mobile_number", employee.cellphone_number)
+            employee.telephone_number = data.get("telephone_number", employee.telephone_number)
+            employee.superior = Employee.objects.filter(id=data.get("supervisor", employee.superior.id)).first()
 
-            employee.cellphone_number = data.get("mobile_number")
-
-            employee.telephone_number = data.get("telephone_number")
-
-            employee.superior = Employee.objects.filter(id=int(data.get("superior"))).first()
-
-            employee.added_by = request.user
-
-            # Save the employee before adding roles, modules, etc.
-            employee.save()
-
-            # Assign roles
             if "role" in data:
-                employee.role.clear()
-                for r in data['role']:
-                    role = Roles.objects.get(pk=r['id'])
-                    employee.role.add(role)
+                role_id = data["role"]
+                role = Roles.objects.get(id=role_id)
+                employee.role = role
 
-            # assign modules
-            if "modules" in data:
-                modules = Modules.objects.filter(module__in=data["modules"])
-                employee.modules.set(modules)
-
-            # assign submodules
-            if "submodules" in data:
-                submodules = Submodules.objects.filter(submodule__in=  data["modules"])
-                modules = set(submodule.module for submodule in submodules)
-                employee.submodules.set(submodules)
-
-            for module in modules:
-                employee.modules.add(module)
-
-
-            # assign areas
             if "area" in data:
-                employee.area.clear()
-                areas = Area.objects.filter(location__in=[item['value'] for item in data['area']])
+                area_instances = Area.objects.filter(location__in=[area["value"] for area in data["area"]])
+                employee.area.set(area_instances)
 
-                employee.area.add(*areas)
-
-            # ssign module permissions
             if "permissions" in data:
-                employee.module_permissions.clear()
-                for module_name, actions in data["permissions"].items():
-                    for action, has_permission in actions.items():
 
-                        if has_permission:
-                            permission = ModulePermissions.objects.filter(
-                                codename=action
-                            ).first()
-                            if permission:
-                                employee.module_permissions.add(permission)
+                employee.module_permissions.clear()
+
+                modules_to_add = set()
+                for action, has_permission in data['permissions'].items():
+                    if has_permission:
+                        permission = ModulePermissions.objects.filter(codename=action).first()
+                        if permission:
+                            employee.module_permissions.add(permission)
+
+                            def get_module_hierarchy(module):
+                                hierarchy = []
+                                while module:
+                                    hierarchy.append(module)
+                                    module = module.parent_module
+                                return hierarchy
+
+                            module_hierarchy = get_module_hierarchy(permission.module)
+                            modules_to_add.update(module_hierarchy)
+
+                employee.modules.set(modules_to_add)
+
             employee.save()
 
-            # Return the updated employee data
             return Response(EmployeeSerializer(employee).data, status=status.HTTP_200_OK)
 
         except Exception as e:
@@ -391,7 +374,6 @@ class EmployeeEditView(RetrieveUpdateAPIView):
                 {"error": f"Failed to update employee. Details: {str(e)}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
 
 
 class RoleEditView(RetrieveUpdateAPIView):
@@ -404,35 +386,35 @@ class RoleEditView(RetrieveUpdateAPIView):
             data = request.data
             role_instance = Roles.objects.get(id=pk)
 
-            if "modules" in data:
-                    modules = Modules.objects.filter(module__in=data["modules"])
-                    role_instance.modules.set(modules)
-
-            if "submodules" in data:
-                submodules = Submodules.objects.filter(submodule__in=  data["modules"])
-                modules = set(submodule.module for submodule in submodules)
-
-                role_instance.submodules.set(submodules)
-
-                for module in modules:
-                    role_instance.modules.add(module)
-
             if "area" in data:
                 role_instance.area.clear()
                 areas = Area.objects.filter(location__in=[item['value'] for item in data['area']])
-
                 role_instance.area.add(*areas)
 
             if "permissions" in data:
                 role_instance.permissions.clear()
-                for module_name, actions in data["permissions"].items():
-                    for action, has_permission in actions.items():
-                        if has_permission:
-                            permission = ModulePermissions.objects.filter(
-                                    codename=action
-                                ).first()
-                            if permission:
-                                    role_instance.permissions.add(permission)
+
+                modules_to_add = set()
+                for action, has_permission in data['permissions'].items():
+
+                    if has_permission:
+                        permission = ModulePermissions.objects.filter(codename=action).first()
+                        if permission:
+                            role_instance.permissions.add(permission)
+
+                            def get_module_hierarchy(module):
+                                hierarchy = []
+                                while module:
+                                    hierarchy.append(module)
+                                    module = module.parent_module
+
+                                return hierarchy
+
+                            module_hierarchy = get_module_hierarchy(permission.module)
+                            modules_to_add.update(module_hierarchy)
+
+                role_instance.modules.set(modules_to_add)
+
             role_instance.save()
             return Response(
                     RolesSerializerPlain(role_instance).data,
@@ -444,56 +426,44 @@ class RoleEditView(RetrieveUpdateAPIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
 
-        
 
 class CombinedDataView(APIView):
-    
-    permission_classes = [IsAuthenticated] 
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        
         modules_with_no_submodules = Modules.objects.filter(submodules__isnull=True)
-        submodules = Submodules.objects.all()
-        modules = list(modules_with_no_submodules) + list(submodules)
-        module_serializer = ModuleSerializer(modules, many=True)
+        module_serializer = ModulesSerializerParent(modules_with_no_submodules, many=True)
+
         areas = Area.objects.all().values()
-       # area_serializer = AreaSerializer(areas, many=True)
         departments = Departments.objects.all()
         dept_serializer = DepartmentsSerializer(departments, many=True)
         roles = Roles.objects.all()
         role_serializer = RoleSerializer(roles, many=True)
 
         supervisor_role = roles.filter(role='Supervisors').first()
-        
         if supervisor_role:
-            #get all employees under the supervisor role
             employees_under_supervisor_role = Employee.objects.filter(role=supervisor_role)
-            supervisor_data = employees_under_supervisor_role.values('user__id', 'user__username', 'user__first_name', 'user__last_name')
-
-
+            supervisor_data = employees_under_supervisor_role.values(
+                'user__id', 'user__username', 'user__first_name', 'user__last_name'
+            )
         else:
             supervisor_data = []
-
-
-        #combine all serialized data into single response
         response_data = {
             "modules": module_serializer.data,
             "areas": areas,
             "roles": role_serializer.data,
             "departments": dept_serializer.data,
-            "supervisors": supervisor_data
+            "supervisors": supervisor_data,
         }
 
         return Response(response_data, status=status.HTTP_200_OK)
 
     def post(self, request):
-        
         serializer = RoleSerializer(data=request.data)
         if serializer.is_valid():
-            serializer.save(user=request.user)  #save the role with the current user
+            serializer.save(user=request.user)  # Save the role with the current user
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
 
 class ChangePasswordView(APIView):
@@ -513,7 +483,6 @@ class ChangePasswordView(APIView):
             user.save()
 
             return Response({"detail": "Password changed successfully."}, status=status.HTTP_200_OK)
-
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 

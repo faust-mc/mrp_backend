@@ -1,5 +1,5 @@
 from django.db.models.signals import post_save
-from .models import Modules, Submodules, ModulePermissions
+from .models import Modules, ModulePermissions
 from django.dispatch import receiver
 from django.contrib.contenttypes.models import ContentType
 from django.db.models import Sum,Count,Q,F, Exists
@@ -14,7 +14,7 @@ permissions = ['add', 'view', 'edit', 'delete', 'report']
 @receiver(post_save)
 def dynamic_permission_signal(sender, instance, created, **kwargs):
 
-    applicable_models = ['Modules', 'Submodules']
+    applicable_models = ['Modules']
     model_name = sender.__name__
 
     if model_name in applicable_models and created:
