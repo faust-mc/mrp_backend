@@ -8,6 +8,7 @@ from django.contrib.auth.models import User
 class Area(models.Model):
 	location = models.CharField(max_length=250)
 	province = models.CharField(max_length=50)
+	branch_code = models.CharField(max_length=50, blank=True, null=True)
 	
 
 	def __str__(self):
@@ -16,7 +17,6 @@ class Area(models.Model):
 
 class Branches(models.Model):
 	area = models.ForeignKey(Area, on_delete=models.CASCADE)
-	branch_code = models.CharField(max_length=50)
 	municipality = models.CharField(max_length=50)
 	barangay = models.CharField(max_length=50)
 	street = models.CharField(max_length=50)
@@ -30,7 +30,6 @@ class Departments(models.Model):
 
 	def __str__(self):
 		return self.department
-
 
 
 
@@ -120,3 +119,50 @@ class AccessKey(models.Model):
 
 	def __str__(self):
 		return self.access_key
+
+
+
+class PosItems(models.Model):
+	menu_description = models.CharField(max_length=12)
+	pos_item = models.CharField(max_length=30, unique=True)
+
+
+
+class UploadedFile(models.Model):
+    file_hash = models.CharField(max_length=64, unique=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+
+class BomMasterlist(models.Model):
+	pos_code = models.ForeignKey(PosItems, to_field='pos_item',on_delete=models.CASCADE)
+	category = models.CharField(max_length = 20)
+	item_description = models.TextField(max_length=150)
+	bom = models.FloatField()
+	uom = models.CharField(max_length=10)
+	bos_code = models.CharField(max_length=20)
+	bos_material_description = models.TextField(max_length=150)
+	bos_uom = models.CharField(max_length=10)
+
+
+class Sales(models.Model):
+	ifs_code = models.CharField(max_length=10)
+	outlet = models.ForeignKey(Area, on_delete=models.CASCADE)
+	or_number = models.CharField(max_length=12)
+	customer_name = models.CharField(max_length=50, blank=True, null=True)
+	sku_code = models.ForeignKey(PosItems, on_delete=models.CASCADE)
+	quantity = models.IntegerField()
+	unit_price = models.FloatField()
+	gross_sales = models.FloatField()
+	type_of_discount = models.CharField(max_length=20, null	=True, blank=True)
+	discount_amount = models.FloatField()
+	vat_deduct = models.FloatField()
+	net_sales = models.FloatField()
+	mode_of_payment = models.CharField(max_length=10,  null=True, blank=True)
+	transaction_type = models.CharField(max_length=15)
+	note = models.TextField(max_length=50, null=True, blank=True)
+	remarks = models.TextField(max_length=50, null=True, blank=True)
+	sales_date = models.DateField()
+	time = models.TimeField()
+
+
+

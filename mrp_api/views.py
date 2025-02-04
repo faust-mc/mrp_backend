@@ -7,8 +7,9 @@ from rest_framework import status
 from django.contrib.auth.models import User
 from django.contrib.auth.hashers import make_password, check_password
 from django.db.models import Q, Value
-from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, AccessKey
-from .serializers import ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer, EmployeeSerializerPlain, RolesSerializerPlain, AccessKeySerializer, UserDetailSerializer, ModulesSerializerPlain, ModulesSerializerParent
+from django.db import connection, transaction
+from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, AccessKey, BomMasterlist, PosItems, Sales, UploadedFile
+from .serializers import ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer, EmployeeSerializerPlain, RolesSerializerPlain, AccessKeySerializer, UserDetailSerializer,  ModulesSerializerParent, FileUploadSerializer
 from collections import defaultdict
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import authenticate
@@ -17,6 +18,18 @@ from django.http import StreamingHttpResponse
 import random
 import string
 from django.core.paginator import Paginator
+import pandas as pd
+import numpy as np
+import hashlib
+from rapidfuzz import process
+
+
+STRING_LIST = ["apple", "banana", "grape", "orange", "pineapple", "watermelon", "mango", "blueberry", "strawberry", "peach"]
+
+def fuzzy_match(query, choices, limit=3, threshold=70):
+    matches = process.extract(query, choices, limit=limit, score_cutoff=threshold)
+    return [(match, score) for match, score, _ in matches]
+
 
 class CustomTokenObtainPairView(TokenObtainPairView):
 
@@ -174,7 +187,6 @@ class EmployeeListView(ListCreateAPIView):
                         hierarchy.append(current_module)
                         current_module = current_module.parent_module
                     return hierarchy
-
 
                 modules_to_add = set()
                 for permission in permissions:
@@ -519,3 +531,193 @@ class AccessKeyView(ListAPIView):
         serialized_key = AccessKeySerializer(access_key, many=True)
 
         return Response(serialized_key.data)
+
+
+
+"""Upload excel part. Start of process"""
+
+
+
+class PosItemsUploadView(APIView):
+    def post(self, request):
+        serializer = FileUploadSerializer(data=request.data)
+        if serializer.is_valid():
+            file = serializer.validated_data['file']
+            try:
+                df = pd.read_excel(file, engine='openpyxl')
+
+                if 'SKU CODE' not in df.columns or 'SKU DESCRIPTION' not in df.columns:
+                    return Response({"error": "Missing 'sku_code' or 'sku_description' columns."}, status=status.HTTP_400_BAD_REQUEST)
+
+                distinct_skus = df[['SKU CODE', 'SKU DESCRIPTION']].drop_duplicates(subset='SKU CODE')
+
+                pos_items = [
+                    PosItems(menu_description=row['SKU DESCRIPTION'], pos_item=row['SKU CODE'])
+                    for _, row in distinct_skus.iterrows()
+                ]
+
+
+                with transaction.atomic():
+                    with connection.cursor() as cursor:
+                        cursor.execute('ALTER TABLE mrp_api_positems DISABLE KEYS;')
+
+                    PosItems.objects.bulk_create(pos_items, batch_size=1000)
+
+                    with connection.cursor() as cursor:
+                        cursor.execute('ALTER TABLE mrp_api_positems ENABLE KEYS;')
+
+                return Response({"message": "✅ POS Items imported successfully!"}, status=status.HTTP_201_CREATED)
+            except Exception as e:
+                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+class UploadBOMMasterlist(APIView):
+    def post(self, request):
+        serializer = FileUploadSerializer(data=request.data)
+        if serializer.is_valid():
+            file = serializer.validated_data['file']
+            try:
+
+                df = pd.read_excel(file, engine='openpyxl')
+
+                required_columns = [
+                    'POS CODE', 'CATEGORY', 'PD ITEM DESCRIPTION', 'BOM', 'UOM',
+                    'BOS CODE', 'BOS MATERIAL DESCRIPTION', 'BOS MATERIAL UOM'
+                ]
+
+                if not all(col in df.columns for col in required_columns):
+                    return Response({"error": "Missing required columns."}, status=status.HTTP_400_BAD_REQUEST)
+
+
+                chunk_size = 1000
+                num_chunks = int(np.ceil(len(df) / chunk_size))
+                chunks = np.array_split(df, num_chunks)
+
+                with transaction.atomic():
+
+                    with connection.cursor() as cursor:
+                        cursor.execute('ALTER TABLE mrp_api_bommasterlist DISABLE KEYS;')
+
+                    for chunk in chunks:
+                        bom_objects = []
+                        for _, row in chunk.iterrows():
+                            try:
+                                pos_item = PosItems.objects.get(pos_item=row['POS CODE'])
+                                bom_objects.append(
+                                    BomMasterlist(
+                                        pos_code=pos_item,
+                                        category=row['CATEGORY'],
+                                        item_description=row['PD ITEM DESCRIPTION'],
+                                        bom=row['BOM'],
+                                        uom=row['UOM'],
+                                        bos_code=row['BOS CODE'],
+                                        bos_material_description=row['BOS MATERIAL DESCRIPTION'],
+                                        bos_uom=row['BOS MATERIAL UOM']
+                                    )
+                                )
+                            except PosItems.DoesNotExist:
+                                continue  # Skip rows with invalid foreign keys
+
+                        BomMasterlist.objects.bulk_create(bom_objects, batch_size=1000)
+
+
+                    with connection.cursor() as cursor:
+                        cursor.execute('ALTER TABLE mrp_api_bommasterlist ENABLE KEYS;')
+
+                return Response({"message": "✅ Data imported successfully!"}, status=status.HTTP_201_CREATED)
+            except Exception as e:
+                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+class SalesUploadView(APIView):
+    def get_file_hash(self, file):
+        hasher = hashlib.sha256()
+        for chunk in file.chunks():
+            hasher.update(chunk)
+        return hasher.hexdigest()
+
+    def post(self, request):
+        serializer = FileUploadSerializer(data=request.data)
+        if serializer.is_valid():
+            file = serializer.validated_data['file']
+
+            file_hash = self.get_file_hash(file)
+            if UploadedFile.objects.filter(file_hash=file_hash).exists():
+                return Response({"error": "🚫 This file has already been uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                df = pd.read_excel(file, engine='openpyxl')
+
+                required_columns = [
+                    'IFS CODE', 'NAME OF OUTLET', 'OR NO.', 'CUSTOMER NAME', 'SKU CODE',
+                    'QTY', 'UNIT PRICE', 'GROSS SALES', 'TYPE OF DISCOUNT', 'DISC AMOUNT',
+                    'VAT DEDUCT', 'NET SALES', 'MODE OF PAYMENT','TRANSACTION TYPE', 'NOTE', 'REMARKS', 'SALES DATE', 'Time'
+                ]
+
+                if not all(col in df.columns for col in required_columns):
+                    return Response({"error": "Missing required columns."}, status=status.HTTP_400_BAD_REQUEST)
+
+
+                existing_or_numbers = set(Sales.objects.filter(or_number__in=df['OR NO.']).values_list('or_number', flat=True))
+
+
+                new_rows = df[~df['OR NO.'].isin(existing_or_numbers)]
+
+
+                if new_rows.empty:
+                    return Response({"error": "No new OR numbers to insert."}, status=status.HTTP_400_BAD_REQUEST)
+
+                sales_objects = []
+                for _, row in new_rows.iterrows():
+                    try:
+                        outlet = Area.objects.get(location=row['NAME OF OUTLET'])
+                        pos_item = PosItems.objects.get(pos_item=row['SKU CODE'])
+
+                        sales_objects.append(
+                            Sales(
+                                ifs_code=row['IFS CODE'],
+                                outlet=outlet,
+                                or_number=row['OR NO.'],
+                                customer_name=row.get('CUSTOMER NAME'),
+                                sku_code=pos_item,
+                                quantity=row['QTY'],
+                                unit_price=row['UNIT PRICE'],
+                                gross_sales=row['GROSS SALES'],
+                                type_of_discount=row.get('TYPE OF DISCOUNT'),
+                                discount_amount=row['DISC AMOUNT'],
+                                vat_deduct=row['VAT DEDUCT'],
+                                net_sales=row['NET SALES'],
+                                mode_of_payment=row.get('MODE OF PAYMENT'),
+                                transaction_type=row['TRANSACTION TYPE'],
+                                note=row.get('NOTE'),
+                                remarks=row.get('REMARKS'),
+                                sales_date=row['SALES DATE'],
+                                time=row['Time']
+                            )
+                        )
+                    except (Area.DoesNotExist, PosItems.DoesNotExist):
+                        continue
+
+                with transaction.atomic():
+                    with connection.cursor() as cursor:
+                        cursor.execute('ALTER TABLE mrp_api_sales DISABLE KEYS;')
+
+                    Sales.objects.bulk_create(sales_objects, batch_size=1000)
+
+                    with connection.cursor() as cursor:
+                        cursor.execute('ALTER TABLE mrp_api_sales ENABLE KEYS;')
+
+
+                    UploadedFile.objects.create(file_hash=file_hash)
+
+                return Response({"message": "✅ Sales data imported successfully!"}, status=status.HTTP_201_CREATED)
+
+            except Exception as e:
+                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

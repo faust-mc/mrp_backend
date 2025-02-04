@@ -35,7 +35,6 @@ class ModuleSerializer(serializers.ModelSerializer):
         fields = ['id', 'module', 'icon', 'slug', 'path', 'components', 'submodules']
 
     def get_submodules(self, obj):
-        # Recursively serialize submodules
         submodules = obj.submodules.all()
         return ModuleSerializer(submodules, many=True).data
 
@@ -107,15 +106,10 @@ class UserDetailSerializer(serializers.ModelSerializer):
     def get_accessible_modules(self, obj):
         try:
             employee = Employee.objects.get(user=obj)
-
-            # Get the direct modules assigned to the employee
             direct_modules = employee.modules.all()
-            print()
-            print(direct_modules)
-
-            # Recursively build the module hierarchy with their submodules
+            #recursively build the module hierarchy with their submodules
             def build_module_hierarchy(module):
-                # Find submodules that are linked to this module as parent
+                #find submodules that are linked to this module as parent
                 submodules = Modules.objects.filter(parent_module=module, id__in=employee.modules.all())
 
                 module_data = {
@@ -128,12 +122,9 @@ class UserDetailSerializer(serializers.ModelSerializer):
                     "submodules": [build_module_hierarchy(submodule) for submodule in submodules]
                 }
                 return module_data
-
-            # Get the root modules that the user has access to
             accessible_modules = []
             for module in direct_modules:
-                print(module)
-                # If the module has no parent, treat it as a root module and build its hierarchy
+                #if the module has no parent, treat it as a root module and build its hierarchy
                 if module.parent_module is None:
                     accessible_modules.append(build_module_hierarchy(module))
 
@@ -141,11 +132,6 @@ class UserDetailSerializer(serializers.ModelSerializer):
 
         except Employee.DoesNotExist:
             return []
-
-
-
-
-
 
 
 class ChangePasswordSerializer(serializers.Serializer):
@@ -156,11 +142,7 @@ class ChangePasswordSerializer(serializers.Serializer):
 
         try:
             password_validation.validate_password(value)
-            print("e")
         except serializers.ValidationError as e:
-            print("er")
-
-
             raise serializers.ValidationError(e.messages)
         return value
 
@@ -170,9 +152,6 @@ class ModulePermissionsSerializer(serializers.ModelSerializer):
     class Meta:
         model = ModulePermissions
         fields = ['id', 'name', 'codename', 'module']
-
-
-
 
 
 
@@ -233,3 +212,5 @@ class EmployeeSerializerPlain(serializers.ModelSerializer):
         ]
 
 
+class FileUploadSerializer(serializers.Serializer):
+    file = serializers.FileField()

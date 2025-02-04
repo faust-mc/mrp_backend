@@ -1,6 +1,6 @@
 # urls.py
 from django.urls import path
-from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView
+from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView
 
 urlpatterns = [
     path('mrp_api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
@@ -17,7 +17,11 @@ urlpatterns = [
     path('roleplain/<int:pk>/', RoleFlatDetailView.as_view(), name='roleplain'),
     path('accesskey-list/', AccessKeyView.as_view(), name='accesskey-list'),
     path('for-forms/', CombinedDataView.as_view(), name='for-forms'),
+    path('master-data-upload/', UploadBOMMasterlist.as_view(), name='file-upload'),
+    path('pos-item-upload/', PosItemsUploadView.as_view(), name='post_item-upload'),
+    path('sales-upload/', SalesUploadView.as_view(), name='sales-upload'),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
+
     
 ]
 
