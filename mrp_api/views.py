@@ -724,7 +724,7 @@ class EndingInventoryUploadView(APIView):
         serializer = FileUploadSerializer(data=request.data)
         if serializer.is_valid():
             file = serializer.validated_data['file']
-            area_id = 4   #hardcoded for now. can be dynamic
+            area_id = request.data.get('area_id')
 
             if not area_id:
                 return Response({"error": "Missing 'area_id' in request."}, status=status.HTTP_400_BAD_REQUEST)
@@ -733,7 +733,7 @@ class EndingInventoryUploadView(APIView):
             if not area:
                 return Response({"error": f"Area ID {area_id} not found."}, status=status.HTTP_400_BAD_REQUEST)
 
-            inventory_code, _ = InventoryCode.objects.get_or_create(area=area)
+            inventory_code = InventoryCode.objects.create(area=area)
 
             try:
                 df = pd.read_excel(file, engine='openpyxl')
@@ -757,7 +757,7 @@ class EndingInventoryUploadView(APIView):
                             )
 
                         inventory_items.append(EndingInventory(
-                            inventory_code=inventory_code,  # ✅ Link to InventoryCode instead of Area
+                            inventory_code=inventory_code,
                             bom_entry=bom_entry,
 
                             actual_ending=row["QTY"] if pd.notna(row["QTY"]) else 0

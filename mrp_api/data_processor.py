@@ -148,14 +148,18 @@ def calculate_area_sales(area):
 
 
 def calculate_average_sales():
-    areas = Area.objects.filter(location="CHOOKS EXP SM HYPERMARKET IMUS")
+    areas = Area.objects.filter(location="CHOOKS FARMERS PLAZA")
     #areas = Area.objects.all()
     with ThreadPoolExecutor() as executor:
         executor.map(calculate_area_sales, areas)
+
+    print("Done generating reports.")
+
+
 
 
 for job in scheduler.get_jobs():
     scheduler.remove_job(job.id)
 
-scheduler.add_job(calculate_average_sales, 'interval', minutes=0.5) # change this to weeks
+scheduler.add_job(calculate_average_sales, 'interval', minutes=1) # change this to weeks
 scheduler.start()
