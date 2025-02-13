@@ -9,7 +9,7 @@ from django.contrib.auth.hashers import make_password, check_password
 from django.db.models import Q, Value
 from django.db import connection, transaction
 from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, AccessKey, BomMasterlist, PosItems, Sales, UploadedFile
-from .serializers import ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer, EmployeeSerializerPlain, RolesSerializerPlain, AccessKeySerializer, UserDetailSerializer,  ModulesSerializerParent, FileUploadSerializer
+from .serializers import ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer, EmployeeSerializerPlain, RolesSerializerPlain, AccessKeySerializer, UserDetailSerializer,  ModulesSerializerParent, FileUploadSerializer, EndingInventory, InventoryCode, BosItems
 from collections import defaultdict
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import authenticate
@@ -546,13 +546,13 @@ class PosItemsUploadView(APIView):
             try:
                 df = pd.read_excel(file, engine='openpyxl')
 
-                if 'SKU CODE' not in df.columns or 'SKU DESCRIPTION' not in df.columns:
+                if 'POS CODE' not in df.columns or 'MENU - DESCRIPTION' not in df.columns:
                     return Response({"error": "Missing 'sku_code' or 'sku_description' columns."}, status=status.HTTP_400_BAD_REQUEST)
 
-                distinct_skus = df[['SKU CODE', 'SKU DESCRIPTION']].drop_duplicates(subset='SKU CODE')
+                distinct_skus = df[['POS CODE', 'MENU - DESCRIPTION']].drop_duplicates(subset='POS CODE')
 
                 pos_items = [
-                    PosItems(menu_description=row['SKU DESCRIPTION'], pos_item=row['SKU CODE'])
+                    PosItems(menu_description=row['MENU - DESCRIPTION'], pos_item=row['POS CODE'])
                     for _, row in distinct_skus.iterrows()
                 ]
 
@@ -572,57 +572,56 @@ class PosItemsUploadView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-
-
 class UploadBOMMasterlist(APIView):
     def post(self, request):
         serializer = FileUploadSerializer(data=request.data)
         if serializer.is_valid():
             file = serializer.validated_data['file']
             try:
-
                 df = pd.read_excel(file, engine='openpyxl')
 
                 required_columns = [
                     'POS CODE', 'CATEGORY', 'PD ITEM DESCRIPTION', 'BOM', 'UOM',
                     'BOS CODE', 'BOS MATERIAL DESCRIPTION', 'BOS MATERIAL UOM'
                 ]
+                missing_columns = [col for col in required_columns if col not in df.columns]
+                if missing_columns:
+                    return Response({"error": f"Missing columns: {', '.join(missing_columns)}"}, status=status.HTTP_400_BAD_REQUEST)
 
-                if not all(col in df.columns for col in required_columns):
-                    return Response({"error": "Missing required columns."}, status=status.HTTP_400_BAD_REQUEST)
+                df = df.where(pd.notna(df), None)
 
+                pos_codes = df['POS CODE'].unique()
+                bos_codes = df['BOS CODE'].unique()
+
+                pos_items_map = {item.pos_item: item for item in PosItems.objects.filter(pos_item__in=pos_codes)}
+                bos_items_map = {item.bos_code: item for item in BosItems.objects.filter(bos_code__in=bos_codes)}
 
                 chunk_size = 1000
                 num_chunks = int(np.ceil(len(df) / chunk_size))
                 chunks = np.array_split(df, num_chunks)
 
                 with transaction.atomic():
-
                     with connection.cursor() as cursor:
                         cursor.execute('ALTER TABLE mrp_api_bommasterlist DISABLE KEYS;')
 
                     for chunk in chunks:
                         bom_objects = []
                         for _, row in chunk.iterrows():
-                            try:
-                                pos_item = PosItems.objects.get(pos_item=row['POS CODE'])
+                            pos_item = pos_items_map.get(str(row['POS CODE']))
+                            bos_item = bos_items_map.get(str(row['BOS CODE']))
+
+                            if pos_item or bos_item:
                                 bom_objects.append(
                                     BomMasterlist(
                                         pos_code=pos_item,
+                                        bos_code=bos_item,  # Assign the instance, NOT a raw string
                                         category=row['CATEGORY'],
                                         item_description=row['PD ITEM DESCRIPTION'],
                                         bom=row['BOM'],
                                         uom=row['UOM'],
-                                        bos_code=row['BOS CODE'],
-                                        bos_material_description=row['BOS MATERIAL DESCRIPTION'],
-                                        bos_uom=row['BOS MATERIAL UOM']
                                     )
                                 )
-                            except PosItems.DoesNotExist:
-                                continue  # Skip rows with invalid foreign keys
-
                         BomMasterlist.objects.bulk_create(bom_objects, batch_size=1000)
-
 
                     with connection.cursor() as cursor:
                         cursor.execute('ALTER TABLE mrp_api_bommasterlist ENABLE KEYS;')
@@ -630,8 +629,8 @@ class UploadBOMMasterlist(APIView):
                 return Response({"message": "✅ Data imported successfully!"}, status=status.HTTP_201_CREATED)
             except Exception as e:
                 return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class SalesUploadView(APIView):
@@ -652,7 +651,8 @@ class SalesUploadView(APIView):
 
             try:
                 df = pd.read_excel(file, engine='openpyxl')
-
+                print("df----")
+                print(df)
                 required_columns = [
                     'IFS CODE', 'NAME OF OUTLET', 'OR NO.', 'CUSTOMER NAME', 'SKU CODE',
                     'QTY', 'UNIT PRICE', 'GROSS SALES', 'TYPE OF DISCOUNT', 'DISC AMOUNT',
@@ -664,9 +664,14 @@ class SalesUploadView(APIView):
 
 
                 existing_or_numbers = set(Sales.objects.filter(or_number__in=df['OR NO.']).values_list('or_number', flat=True))
+                print(existing_or_numbers)
+
 
 
                 new_rows = df[~df['OR NO.'].isin(existing_or_numbers)]
+                print()
+                print("new_rows----")
+                print(new_rows)
 
 
                 if new_rows.empty:
@@ -720,4 +725,135 @@ class SalesUploadView(APIView):
             except Exception as e:
                 return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+class EndingInventoryUploadView(APIView):
+    def post(self, request):
+        serializer = FileUploadSerializer(data=request.data)
+        if serializer.is_valid():
+            file = serializer.validated_data['file']
+            area_id = 4   # Hardcoded for now, can be dynamic
+
+            if not area_id:
+                return Response({"error": "Missing 'area_id' in request."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Fetch the area object
+            area = Area.objects.filter(id=area_id).first()
+            if not area:
+                return Response({"error": f"Area ID {area_id} not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+            # ✅ Step 1: Get or create InventoryCode for this Area
+            inventory_code, _ = InventoryCode.objects.get_or_create(area=area)
+
+            try:
+                df = pd.read_excel(file, engine='openpyxl')
+
+                required_columns = ["BOS MATCODE", "BOS MATERIAL DESCRIPTION", "QTY", "COLD/DRY/FOR PR"]
+                if not all(col in df.columns for col in required_columns):
+                    return Response({"error": "Missing required columns."}, status=status.HTTP_400_BAD_REQUEST)
+
+                distinct_entries = df[["BOS MATCODE", "BOS MATERIAL DESCRIPTION", "QTY", "COLD/DRY/FOR PR"]].drop_duplicates(subset="BOS MATCODE")
+
+                inventory_items = []
+
+                for _, row in distinct_entries.iterrows():
+                    try:
+                        bom_entry = BosItems.objects.filter(bos_code=row["BOS MATCODE"]).first()
+                        print(row["BOS MATCODE"])
+                        print(bom_entry)
+                        print()
+                        if not bom_entry:
+                            bom_entry = BosItems.objects.create(
+                                bos_code=row["BOS MATCODE"],
+                                bos_material_description=row["BOS MATERIAL DESCRIPTION"]
+                            )
+                        print(1)
+                        inventory_items.append(EndingInventory(
+                            inventory_code=inventory_code,  # ✅ Link to InventoryCode instead of Area
+                            bom_entry=bom_entry,
+
+                            actual_ending=row["QTY"] if pd.notna(row["QTY"]) else 0
+                        ))
+
+                        print(2)
+
+                    except Exception as e:
+                        return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+                # ✅ Step 2: Bulk insert EndingInventory
+                with transaction.atomic():
+                    with connection.cursor() as cursor:
+                        cursor.execute('ALTER TABLE mrp_api_endinginventory DISABLE KEYS;')
+
+                    EndingInventory.objects.bulk_create(inventory_items, batch_size=1000)
+
+                    with connection.cursor() as cursor:
+                        cursor.execute('ALTER TABLE mrp_api_endinginventory ENABLE KEYS;')
+
+                return Response({"message": "✅ Ending Inventory imported successfully!"}, status=status.HTTP_201_CREATED)
+            except Exception as e:
+                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class BosItemsUploadView(APIView):
+    def post(self, request):
+        serializer = FileUploadSerializer(data=request.data)
+        if serializer.is_valid():
+            file = serializer.validated_data['file']
+            try:
+                df = pd.read_excel(file, engine='openpyxl')
+
+                # Ensure required columns exist
+                required_columns = {
+                    "BOS MATCODE": "bos_code",
+                    "BOS MATERIAL DESCRIPTION": "bos_material_description",
+                    "BOS UOM": "bos_uom",
+                    "DELIVERY UOM": "delivery_uom",
+                    "BUNDLING SIZE": "bundling_size",
+                    "CONVERSION DELIVERY UOM": "conversion_delivery_uom",
+                    "COLD/DRY/FOR PR": "category",
+                }
+
+                missing_columns = [col for col in required_columns.keys() if col not in df.columns]
+                if missing_columns:
+                    return Response({"error": f"Missing columns: {', '.join(missing_columns)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+                # Rename columns for consistency with the model
+                df.rename(columns=required_columns, inplace=True)
+
+                # Drop duplicates based on bos_code to avoid unique constraint violations
+                df.drop_duplicates(subset=['bos_code'], inplace=True)
+
+                # Convert NaN to None for nullable fields
+                df = df.where(pd.notna(df), None)
+
+                # Prepare bulk insert data
+                bos_items = [
+                    BosItems(
+                        bos_code=row['bos_code'],
+                        bos_material_description=row['bos_material_description'],
+                        bos_uom=row['bos_uom'],
+                        delivery_uom=row['delivery_uom'],
+                        bundling_size=row['bundling_size'],
+                        conversion_delivery_uom=row['conversion_delivery_uom'],
+                        category=row['category'],
+                    ) for _, row in df.iterrows()
+                ]
+
+                # Use bulk_create for efficient inserts
+                with transaction.atomic():
+                    with connection.cursor() as cursor:
+                        cursor.execute('ALTER TABLE mrp_api_bositems DISABLE KEYS;')
+
+                    BosItems.objects.bulk_create(bos_items, batch_size=1000)
+
+                    with connection.cursor() as cursor:
+                        cursor.execute('ALTER TABLE mrp_api_bositems ENABLE KEYS;')
+
+                return Response({"message": "✅ BOS Items imported successfully!"}, status=status.HTTP_201_CREATED)
+            except Exception as e:
+                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

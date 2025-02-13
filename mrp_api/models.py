@@ -122,47 +122,97 @@ class AccessKey(models.Model):
 
 
 
+class UploadedFile(models.Model):
+    file_hash = models.CharField(max_length=64, unique=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+
+
 class PosItems(models.Model):
 	menu_description = models.CharField(max_length=12)
 	pos_item = models.CharField(max_length=30, unique=True)
 
 
 
-class UploadedFile(models.Model):
-    file_hash = models.CharField(max_length=64, unique=True)
-    uploaded_at = models.DateTimeField(auto_now_add=True)
+class BosItems(models.Model):
+	bos_code = models.CharField(max_length=20,null=True, blank=True, unique=True)
+	bos_material_description = models.TextField(max_length=150,null=True, blank=True)
+	bos_uom = models.CharField(max_length=10,null=True, blank=True)
+	category = models.CharField(max_length=8, null=True,blank=True)
+	delivery_uom = models.CharField(max_length=10,null=True, blank=True)
+	bundling_size = models.FloatField(null=True, blank=True)
+	conversion_delivery_uom = models.FloatField(null=True, blank=True)
+
 
 
 class BomMasterlist(models.Model):
-	pos_code = models.ForeignKey(PosItems, to_field='pos_item',on_delete=models.CASCADE)
-	category = models.CharField(max_length = 20)
-	item_description = models.TextField(max_length=150)
-	bom = models.FloatField()
-	uom = models.CharField(max_length=10)
-	bos_code = models.CharField(max_length=20)
-	bos_material_description = models.TextField(max_length=150)
-	bos_uom = models.CharField(max_length=10)
+	pos_code = models.ForeignKey(PosItems, to_field='pos_item',on_delete=models.CASCADE,null=True, blank=True)
+	bos_code = models.ForeignKey(BosItems, to_field='bos_code',on_delete=models.CASCADE,null=True, blank=True)
+	bom = models.FloatField(null=True, blank=True)
+	uom = models.CharField(max_length=10,null=True, blank=True)
+	category = models.CharField(max_length = 20,null=True, blank=True)
+	item_description = models.TextField(max_length=150,null=True, blank=True)
+
+
 
 
 class Sales(models.Model):
-	ifs_code = models.CharField(max_length=10)
-	outlet = models.ForeignKey(Area, on_delete=models.CASCADE)
-	or_number = models.CharField(max_length=12)
+	ifs_code = models.CharField(max_length=10,null=True, blank=True)
+	outlet = models.ForeignKey(Area, on_delete=models.CASCADE, null=True, blank=True)
+	or_number = models.CharField(max_length=12,null=True, blank=True)
 	customer_name = models.CharField(max_length=50, blank=True, null=True)
-	sku_code = models.ForeignKey(PosItems, on_delete=models.CASCADE)
-	quantity = models.IntegerField()
-	unit_price = models.FloatField()
-	gross_sales = models.FloatField()
+	sku_code = models.ForeignKey(PosItems, on_delete=models.CASCADE,null=True, blank=True)
+	quantity = models.IntegerField(null=True, blank=True)
+	unit_price = models.FloatField(null=True, blank=True)
+	gross_sales = models.FloatField(null=True, blank=True)
 	type_of_discount = models.CharField(max_length=20, null	=True, blank=True)
-	discount_amount = models.FloatField()
-	vat_deduct = models.FloatField()
-	net_sales = models.FloatField()
+	discount_amount = models.FloatField(null=True, blank=True)
+	vat_deduct = models.FloatField(null=True, blank=True)
+	net_sales = models.FloatField(null=True, blank=True)
 	mode_of_payment = models.CharField(max_length=10,  null=True, blank=True)
 	transaction_type = models.CharField(max_length=15)
 	note = models.TextField(max_length=50, null=True, blank=True)
 	remarks = models.TextField(max_length=50, null=True, blank=True)
-	sales_date = models.DateField()
-	time = models.TimeField()
+	sales_date = models.DateField(null=True, blank=True)
+	time = models.TimeField(null=True, blank=True)
 
+
+
+
+class SalesReport(models.Model):
+	sales_report_name = models.CharField(max_length=50, null=True, blank=True)
+	pos_item = models.ForeignKey(PosItems, on_delete=models.CASCADE,null=True, blank=True)
+	dine_in_quantity = models.FloatField(null=True, blank=True)
+	take_out_quantity = models.FloatField(null=True, blank=True)
+	average_dine_in_sold = models.FloatField(null=True, blank=True)
+	average_tako_out_sold = models.FloatField(null=True, blank=True)
+	area = models.ForeignKey(Area, on_delete=models.CASCADE, null=True, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
+
+
+class InitialReplenishment(models.Model):
+	sales_report = models.ForeignKey(SalesReport, on_delete=models.CASCADE, related_name="forecasts")
+	bom_entry = models.ForeignKey(BomMasterlist, on_delete=models.CASCADE, related_name="bom_forecasts")
+	daily_sales = models.FloatField(default=0)
+	average_daily_usage = models.FloatField(default=0)
+	weekly_usage = models.FloatField(default=0)
+	safety_stock = models.FloatField(default=0)
+	forecast_weekly_consumption = models.FloatField(default=0)
+
+
+
+class InventoryCode(models.Model):
+	area = models.ForeignKey(Area, on_delete=models.CASCADE, null=True, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
+
+
+class EndingInventory(models.Model):
+	inventory_code = models.ForeignKey(InventoryCode, on_delete=models.CASCADE, null=True, blank=True)
+	bom_entry = models.ForeignKey(BosItems, on_delete=models.CASCADE, related_name="bom_ending_inventory")
+
+	actual_ending = models.FloatField(default=0)
+	upcoming_delivery = models.FloatField(default=0, null=True, blank=True)
 
 

@@ -34,7 +34,8 @@ INSTALLED_APPS = [
     'mrp_api',
     'rest_framework',
     'corsheaders',
-    'rest_framework_simplejwt'
+    'rest_framework_simplejwt',
+
 ]
 
 REST_FRAMEWORK = {

@@ -1,6 +1,6 @@
 # urls.py
 from django.urls import path
-from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView
+from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView, EndingInventoryUploadView, BosItemsUploadView
 
 urlpatterns = [
     path('mrp_api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
@@ -19,7 +19,9 @@ urlpatterns = [
     path('for-forms/', CombinedDataView.as_view(), name='for-forms'),
     path('master-data-upload/', UploadBOMMasterlist.as_view(), name='file-upload'),
     path('pos-item-upload/', PosItemsUploadView.as_view(), name='post_item-upload'),
+    path('bom-item-upload/', BosItemsUploadView.as_view(), name='bom_item-upload'),
     path('sales-upload/', SalesUploadView.as_view(), name='sales-upload'),
+    path('ending-inventory-upload/', EndingInventoryUploadView.as_view(), name='ending-inventory-upload'),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
 
     

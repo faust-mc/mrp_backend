@@ -1,6 +1,6 @@
 
 from rest_framework import serializers
-from .models import Area, ModulePermissions, Modules, Roles, Employee, Departments, AccessKey
+from .models import Area, ModulePermissions, Modules, Roles, Employee, Departments, AccessKey, EndingInventory, InventoryCode, BosItems
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import password_validation
