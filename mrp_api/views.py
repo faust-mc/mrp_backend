@@ -556,7 +556,6 @@ class PosItemsUploadView(APIView):
                     for _, row in distinct_skus.iterrows()
                 ]
 
-
                 with transaction.atomic():
                     with connection.cursor() as cursor:
                         cursor.execute('ALTER TABLE mrp_api_positems DISABLE KEYS;')
@@ -651,8 +650,7 @@ class SalesUploadView(APIView):
 
             try:
                 df = pd.read_excel(file, engine='openpyxl')
-                print("df----")
-                print(df)
+
                 required_columns = [
                     'IFS CODE', 'NAME OF OUTLET', 'OR NO.', 'CUSTOMER NAME', 'SKU CODE',
                     'QTY', 'UNIT PRICE', 'GROSS SALES', 'TYPE OF DISCOUNT', 'DISC AMOUNT',
@@ -664,15 +662,8 @@ class SalesUploadView(APIView):
 
 
                 existing_or_numbers = set(Sales.objects.filter(or_number__in=df['OR NO.']).values_list('or_number', flat=True))
-                print(existing_or_numbers)
-
-
 
                 new_rows = df[~df['OR NO.'].isin(existing_or_numbers)]
-                print()
-                print("new_rows----")
-                print(new_rows)
-
 
                 if new_rows.empty:
                     return Response({"error": "No new OR numbers to insert."}, status=status.HTTP_400_BAD_REQUEST)
@@ -717,7 +708,6 @@ class SalesUploadView(APIView):
                     with connection.cursor() as cursor:
                         cursor.execute('ALTER TABLE mrp_api_sales ENABLE KEYS;')
 
-
                     UploadedFile.objects.create(file_hash=file_hash)
 
                 return Response({"message": "✅ Sales data imported successfully!"}, status=status.HTTP_201_CREATED)
@@ -734,17 +724,15 @@ class EndingInventoryUploadView(APIView):
         serializer = FileUploadSerializer(data=request.data)
         if serializer.is_valid():
             file = serializer.validated_data['file']
-            area_id = 4   # Hardcoded for now, can be dynamic
+            area_id = 4   #hardcoded for now. can be dynamic
 
             if not area_id:
                 return Response({"error": "Missing 'area_id' in request."}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Fetch the area object
             area = Area.objects.filter(id=area_id).first()
             if not area:
                 return Response({"error": f"Area ID {area_id} not found."}, status=status.HTTP_400_BAD_REQUEST)
 
-            # ✅ Step 1: Get or create InventoryCode for this Area
             inventory_code, _ = InventoryCode.objects.get_or_create(area=area)
 
             try:
@@ -761,15 +749,13 @@ class EndingInventoryUploadView(APIView):
                 for _, row in distinct_entries.iterrows():
                     try:
                         bom_entry = BosItems.objects.filter(bos_code=row["BOS MATCODE"]).first()
-                        print(row["BOS MATCODE"])
-                        print(bom_entry)
-                        print()
+
                         if not bom_entry:
                             bom_entry = BosItems.objects.create(
                                 bos_code=row["BOS MATCODE"],
                                 bos_material_description=row["BOS MATERIAL DESCRIPTION"]
                             )
-                        print(1)
+
                         inventory_items.append(EndingInventory(
                             inventory_code=inventory_code,  # ✅ Link to InventoryCode instead of Area
                             bom_entry=bom_entry,
@@ -777,12 +763,9 @@ class EndingInventoryUploadView(APIView):
                             actual_ending=row["QTY"] if pd.notna(row["QTY"]) else 0
                         ))
 
-                        print(2)
-
                     except Exception as e:
                         return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-                # ✅ Step 2: Bulk insert EndingInventory
                 with transaction.atomic():
                     with connection.cursor() as cursor:
                         cursor.execute('ALTER TABLE mrp_api_endinginventory DISABLE KEYS;')
@@ -806,7 +789,6 @@ class BosItemsUploadView(APIView):
             try:
                 df = pd.read_excel(file, engine='openpyxl')
 
-                # Ensure required columns exist
                 required_columns = {
                     "BOS MATCODE": "bos_code",
                     "BOS MATERIAL DESCRIPTION": "bos_material_description",
@@ -821,16 +803,12 @@ class BosItemsUploadView(APIView):
                 if missing_columns:
                     return Response({"error": f"Missing columns: {', '.join(missing_columns)}"}, status=status.HTTP_400_BAD_REQUEST)
 
-                # Rename columns for consistency with the model
+
                 df.rename(columns=required_columns, inplace=True)
-
-                # Drop duplicates based on bos_code to avoid unique constraint violations
                 df.drop_duplicates(subset=['bos_code'], inplace=True)
-
-                # Convert NaN to None for nullable fields
                 df = df.where(pd.notna(df), None)
 
-                # Prepare bulk insert data
+                #prepare for bulk insert data
                 bos_items = [
                     BosItems(
                         bos_code=row['bos_code'],
@@ -843,7 +821,7 @@ class BosItemsUploadView(APIView):
                     ) for _, row in df.iterrows()
                 ]
 
-                # Use bulk_create for efficient inserts
+                #use bulk_create for efficient inserts
                 with transaction.atomic():
                     with connection.cursor() as cursor:
                         cursor.execute('ALTER TABLE mrp_api_bositems DISABLE KEYS;')

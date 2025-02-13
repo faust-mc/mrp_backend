@@ -28,8 +28,6 @@ def process_item(item, sales_data, area):
 
     bom_entries = BomMasterlist.objects.filter(pos_code=item)
 
-
-    # ✅ Move sales.append outside the loop
     sales.append({
         "pos_item": item.pos_item,
         "AREA": area.location,
@@ -102,7 +100,7 @@ def calculate_area_sales(area):
     forecast_df = pd.DataFrame(forecast_result).sort_values(by='MASTERLIST_ID', ascending=True)
     sales_df = pd.DataFrame(sales_result)
 
-    # Step 1: Get the latest inventory code per area
+
     latest_inventory_code = InventoryCode.objects.filter(area=area).order_by('-created_at').first()
 
     if latest_inventory_code:
@@ -119,10 +117,7 @@ def calculate_area_sales(area):
                 'AVERAGE_DAILY_USAGE': lambda x: round(x.sum() + 0.5),
                 'FORECAST_WEEKLY_CONSUMPTION': lambda x: round(x.sum() + 0.5)
             }).reset_index()
-            print(forecast_summary)
-            print()
-            print(inventory_df)
-            print("-----1")
+
 
             forecast_summary.rename(columns={
                 'AVERAGE_DAILY_USAGE': 'TOTAL_AVERAGE_DAILY_USAGE',
@@ -143,7 +138,6 @@ def calculate_area_sales(area):
     else:
         print(f"No inventory code found for area: {area.location}")
 
-    # Save to Excel
     file_name = f"{area.location}_sales_report.xlsx"
     with pd.ExcelWriter(file_name, engine='xlsxwriter') as writer:
         forecast_df.to_excel(writer, index=False, sheet_name="Initial Replenishment")
@@ -159,10 +153,9 @@ def calculate_average_sales():
     with ThreadPoolExecutor() as executor:
         executor.map(calculate_area_sales, areas)
 
-# Remove existing jobs before scheduling a new one
+
 for job in scheduler.get_jobs():
     scheduler.remove_job(job.id)
 
-scheduler.add_job(calculate_average_sales, 'interval', minutes=0.5)
-print(scheduler.get_jobs())
+scheduler.add_job(calculate_average_sales, 'interval', minutes=0.5) # change this to weeks
 scheduler.start()
