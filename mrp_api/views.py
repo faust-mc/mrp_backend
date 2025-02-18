@@ -880,51 +880,35 @@ class ForecastByInventoryCodeView(APIView):
 class UpdateForecastView(APIView):
     def patch(self, request, pk):
         forecasts_data = request.data
-
         updated_forecasts = []
-
         for forecast_data in forecasts_data['updated_forecasts']:
-
-
             bom_entry_id = forecast_data.get('bom_entry_id')
-
-
             try:
-                # Fetch the related InventoryCode object by ID
                 inventory_code = InventoryCode.objects.get(id=pk)
 
             except InventoryCode.DoesNotExist:
                 return Response({"detail": f"InventoryCode with ID {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
 
             try:
-                # Fetch the related BosItems object by ID (bom_entry_id)
                 bom_entry = BosItems.objects.get(id=bom_entry_id)
-                print(bom_entry)
+
             except BosItems.DoesNotExist:
                 return Response({"detail": f"BosItems with ID {bom_entry_id} not found."}, status=status.HTTP_404_NOT_FOUND)
 
             try:
-                # Fetch the Forecast object by ID and related InventoryCode and BosItems
+
                 forecast = Forecast.objects.get(inventory_code=inventory_code, bom_entry=bom_entry)
-                print("---1")
-                print(forecast.bom_entry.bundling_size)
-                print(forecast.forecast)
-                print(forecast_data['adjustment'])
-                print()
-                print()
+
                 forecast_data['for_final_delivery'] = max(0, math.ceil((forecast.forecast + forecast_data['adjustment']) / forecast.bom_entry.bundling_size) * forecast.bom_entry.bundling_size)
 
             except Forecast.DoesNotExist:
                 return Response({"detail": f"Forecast with ID {pk} for InventoryCode ID {pk} and BosItems ID {bom_entry_id} not found."}, status=status.HTTP_404_NOT_FOUND)
 
-            # Use the serializer to validate and update the forecast
             serializer = ForecastUpdateSerializer(forecast, data=forecast_data, partial=True)
 
             if serializer.is_valid():
-                # Save the updated forecast and add it to the list
                 updated_forecasts.append(serializer.save())
             else:
                 return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        # Return the updated forecasts as a response
         return Response({"updated_forecasts": ForecastUpdateSerializer(updated_forecasts, many=True).data}, status=status.HTTP_200_OK)

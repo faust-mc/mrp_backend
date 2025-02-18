@@ -241,7 +241,6 @@ class ForecastUpdateSerializer(serializers.ModelSerializer):
         fields = ['bom_entry_id', 'inventory_code_id', 'adjustment', 'for_final_delivery']
 
     def validate_bom_entry_id(self, value):
-        # Validate that the provided bom_entry_id corresponds to a valid BosItems
         try:
             bos_item = BosItems.objects.get(id=value)
         except BosItems.DoesNotExist:
@@ -249,7 +248,6 @@ class ForecastUpdateSerializer(serializers.ModelSerializer):
         return bos_item
 
     def validate_inventory_code_id(self, value):
-        # Validate that the provided inventory_code_id corresponds to a valid InventoryCode
         try:
             inventory_code = InventoryCode.objects.get(id=value)
         except InventoryCode.DoesNotExist:
@@ -257,18 +255,8 @@ class ForecastUpdateSerializer(serializers.ModelSerializer):
         return inventory_code
 
     def update(self, instance, validated_data):
-        print("---1")
-        print(validated_data)
-        print()
-        print(instance)
-        print()
-
-
-
-        # Update other fields
         instance.adjustment = validated_data.get('adjustment', instance.adjustment)
         instance.for_final_delivery = validated_data.get('for_final_delivery', instance.for_final_delivery)
 
-        # Save the updated instance
         instance.save()
         return instance
