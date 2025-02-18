@@ -171,10 +171,12 @@ class Sales(models.Model):
 	net_sales = models.FloatField(null=True, blank=True)
 	mode_of_payment = models.CharField(max_length=10,  null=True, blank=True)
 	transaction_type = models.CharField(max_length=15)
-	note = models.TextField(max_length=50, null=True, blank=True)
-	remarks = models.TextField(max_length=50, null=True, blank=True)
+	note = models.TextField(max_length=150, null=True, blank=True)
+	remarks = models.TextField(max_length=150, null=True, blank=True)
 	sales_date = models.DateField(null=True, blank=True)
 	time = models.TimeField(null=True, blank=True)
+	uploaded_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
 
 
 
@@ -211,8 +213,22 @@ class InventoryCode(models.Model):
 class EndingInventory(models.Model):
 	inventory_code = models.ForeignKey(InventoryCode, on_delete=models.CASCADE, null=True, blank=True)
 	bom_entry = models.ForeignKey(BosItems, on_delete=models.CASCADE, related_name="bom_ending_inventory")
-
 	actual_ending = models.FloatField(default=0)
 	upcoming_delivery = models.FloatField(default=0, null=True, blank=True)
+
+class Forecast(models.Model):
+	inventory_code = models.ForeignKey(InventoryCode, on_delete=models.CASCADE, null=True, blank=True)
+	bom_entry = models.ForeignKey(BosItems, on_delete=models.CASCADE, related_name="bom_ending_forecast")
+	average_daily_usage = models.FloatField(default=0, null=True, blank=True)
+	days_to_last = models.FloatField(default=0, null=True, blank=True)
+	forecast_weekly_consumption = models.FloatField(default=0, null=True, blank=True)
+	forecasted_ending_inventory = models.FloatField(default=0, null=True, blank=True)
+	converted_ending_inventory = models.FloatField(default=0, null=True, blank=True)
+	forecast = models.FloatField(default=0, null=True, blank=True)
+	adjustment = models.FloatField(default=0, null=True, blank=True)
+	for_final_delivery = models.FloatField(default=0, null=True, blank=True)
+
+
+
 
 

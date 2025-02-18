@@ -3,22 +3,26 @@ from rest_framework.generics import RetrieveAPIView, ListAPIView, ListCreateAPIV
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework import status
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from django.contrib.auth.models import User
 from django.contrib.auth.hashers import make_password, check_password
 from django.db.models import Q, Value
 from django.db import connection, transaction
-from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, AccessKey, BomMasterlist, PosItems, Sales, UploadedFile
-from .serializers import ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer, EmployeeSerializerPlain, RolesSerializerPlain, AccessKeySerializer, UserDetailSerializer,  ModulesSerializerParent, FileUploadSerializer, EndingInventory, InventoryCode, BosItems
+from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, AccessKey, BomMasterlist, PosItems, Sales, UploadedFile, InventoryCode, BosItems, EndingInventory, Forecast
+from .serializers import ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer, EmployeeSerializerPlain, RolesSerializerPlain, AccessKeySerializer, UserDetailSerializer,  ModulesSerializerParent, FileUploadSerializer, InventoryCodeSerializer, ForecastSerializer, ForecastUpdateSerializer
+
 from collections import defaultdict
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import authenticate
 from django.core.mail import send_mail
 from django.http import StreamingHttpResponse
+from django.shortcuts import get_object_or_404
 import random
 import string
 from django.core.paginator import Paginator
 import pandas as pd
+import math
 import numpy as np
 import hashlib
 from rapidfuzz import process
@@ -632,6 +636,10 @@ class UploadBOMMasterlist(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+# orig 294933
+# Last Row 386070
+# 335874
+
 class SalesUploadView(APIView):
     def get_file_hash(self, file):
         hasher = hashlib.sha256()
@@ -650,14 +658,17 @@ class SalesUploadView(APIView):
 
             try:
                 df = pd.read_excel(file, engine='openpyxl')
+                df.columns = df.columns.str.upper()
+
 
                 required_columns = [
                     'IFS CODE', 'NAME OF OUTLET', 'OR NO.', 'CUSTOMER NAME', 'SKU CODE',
                     'QTY', 'UNIT PRICE', 'GROSS SALES', 'TYPE OF DISCOUNT', 'DISC AMOUNT',
-                    'VAT DEDUCT', 'NET SALES', 'MODE OF PAYMENT','TRANSACTION TYPE', 'NOTE', 'REMARKS', 'SALES DATE', 'Time'
+                    'VAT DEDUCT', 'NET SALES', 'MODE OF PAYMENT','TRANSACTION TYPE', 'NOTE', 'REMARKS', 'SALES DATE', 'TIME'
                 ]
 
-                if not all(col in df.columns for col in required_columns):
+                if not all(col.upper() in df.columns for col in required_columns):
+
                     return Response({"error": "Missing required columns."}, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -671,8 +682,11 @@ class SalesUploadView(APIView):
                 sales_objects = []
                 for _, row in new_rows.iterrows():
                     try:
+
                         outlet = Area.objects.get(location=row['NAME OF OUTLET'])
+
                         pos_item = PosItems.objects.get(pos_item=row['SKU CODE'])
+
 
                         sales_objects.append(
                             Sales(
@@ -693,13 +707,14 @@ class SalesUploadView(APIView):
                                 note=row.get('NOTE'),
                                 remarks=row.get('REMARKS'),
                                 sales_date=row['SALES DATE'],
-                                time=row['Time']
+                                time=row['TIME']
                             )
                         )
                     except (Area.DoesNotExist, PosItems.DoesNotExist):
                         continue
 
                 with transaction.atomic():
+
                     with connection.cursor() as cursor:
                         cursor.execute('ALTER TABLE mrp_api_sales DISABLE KEYS;')
 
@@ -835,3 +850,81 @@ class BosItemsUploadView(APIView):
             except Exception as e:
                 return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+class InventoryCodeByAreaView(APIView):
+    def get(self, request, pk):
+        try:
+            area = Area.objects.get(id=pk)
+            inventory_codes = InventoryCode.objects.filter(area=area)
+            serializer = InventoryCodeSerializer(inventory_codes, many=True)
+            return Response(serializer.data)
+        except Area.DoesNotExist:
+            return Response({"detail": "Area not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+class ForecastByInventoryCodeView(APIView):
+    def get(self, request, pk):
+        try:
+            inventory_code = InventoryCode.objects.get(id=pk)
+            forecasts = Forecast.objects.filter(inventory_code=inventory_code)
+            serializer = ForecastSerializer(forecasts, many=True)
+            return Response(serializer.data)
+        except InventoryCode.DoesNotExist:
+            return Response({"detail": "Inventory code not found"}, status=status.HTTP_404_NOT_FOUND)
+
+
+
+class UpdateForecastView(APIView):
+    def patch(self, request, pk):
+        forecasts_data = request.data
+
+        updated_forecasts = []
+
+        for forecast_data in forecasts_data['updated_forecasts']:
+
+
+            bom_entry_id = forecast_data.get('bom_entry_id')
+
+
+            try:
+                # Fetch the related InventoryCode object by ID
+                inventory_code = InventoryCode.objects.get(id=pk)
+
+            except InventoryCode.DoesNotExist:
+                return Response({"detail": f"InventoryCode with ID {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            try:
+                # Fetch the related BosItems object by ID (bom_entry_id)
+                bom_entry = BosItems.objects.get(id=bom_entry_id)
+                print(bom_entry)
+            except BosItems.DoesNotExist:
+                return Response({"detail": f"BosItems with ID {bom_entry_id} not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            try:
+                # Fetch the Forecast object by ID and related InventoryCode and BosItems
+                forecast = Forecast.objects.get(inventory_code=inventory_code, bom_entry=bom_entry)
+                print("---1")
+                print(forecast.bom_entry.bundling_size)
+                print(forecast.forecast)
+                print(forecast_data['adjustment'])
+                print()
+                print()
+                forecast_data['for_final_delivery'] = max(0, math.ceil((forecast.forecast + forecast_data['adjustment']) / forecast.bom_entry.bundling_size) * forecast.bom_entry.bundling_size)
+
+            except Forecast.DoesNotExist:
+                return Response({"detail": f"Forecast with ID {pk} for InventoryCode ID {pk} and BosItems ID {bom_entry_id} not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            # Use the serializer to validate and update the forecast
+            serializer = ForecastUpdateSerializer(forecast, data=forecast_data, partial=True)
+
+            if serializer.is_valid():
+                # Save the updated forecast and add it to the list
+                updated_forecasts.append(serializer.save())
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # Return the updated forecasts as a response
+        return Response({"updated_forecasts": ForecastUpdateSerializer(updated_forecasts, many=True).data}, status=status.HTTP_200_OK)

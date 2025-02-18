@@ -1,6 +1,6 @@
 
 from rest_framework import serializers
-from .models import Area, ModulePermissions, Modules, Roles, Employee, Departments, AccessKey, EndingInventory, InventoryCode, BosItems
+from .models import Area, ModulePermissions, Modules, Roles, Employee, Departments, AccessKey, EndingInventory, InventoryCode, BosItems, Forecast
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import password_validation
@@ -214,3 +214,61 @@ class EmployeeSerializerPlain(serializers.ModelSerializer):
 
 class FileUploadSerializer(serializers.Serializer):
     file = serializers.FileField()
+
+
+
+class InventoryCodeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InventoryCode
+        fields = '__all__'
+
+
+
+class ForecastSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Forecast
+        fields = '__all__'
+
+
+
+
+class ForecastUpdateSerializer(serializers.ModelSerializer):
+    bom_entry_id = serializers.IntegerField(write_only=True)
+    inventory_code_id = serializers.IntegerField(write_only=True)
+
+    class Meta:
+        model = Forecast
+        fields = ['bom_entry_id', 'inventory_code_id', 'adjustment', 'for_final_delivery']
+
+    def validate_bom_entry_id(self, value):
+        # Validate that the provided bom_entry_id corresponds to a valid BosItems
+        try:
+            bos_item = BosItems.objects.get(id=value)
+        except BosItems.DoesNotExist:
+            raise serializers.ValidationError(f"BosItems with ID {value} does not exist.")
+        return bos_item
+
+    def validate_inventory_code_id(self, value):
+        # Validate that the provided inventory_code_id corresponds to a valid InventoryCode
+        try:
+            inventory_code = InventoryCode.objects.get(id=value)
+        except InventoryCode.DoesNotExist:
+            raise serializers.ValidationError(f"InventoryCode with ID {value} does not exist.")
+        return inventory_code
+
+    def update(self, instance, validated_data):
+        print("---1")
+        print(validated_data)
+        print()
+        print(instance)
+        print()
+
+
+
+        # Update other fields
+        instance.adjustment = validated_data.get('adjustment', instance.adjustment)
+        instance.for_final_delivery = validated_data.get('for_final_delivery', instance.for_final_delivery)
+
+        # Save the updated instance
+        instance.save()
+        return instance
