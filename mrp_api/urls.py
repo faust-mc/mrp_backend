@@ -1,6 +1,7 @@
 # urls.py
 from django.urls import path
-from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView, EndingInventoryUploadView, BosItemsUploadView, InventoryCodeByAreaView, ForecastByInventoryCodeView, UpdateForecastView
+from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView, EndingInventoryUploadView, BosItemsUploadView, InventoryCodeByAreaView, ForecastByInventoryCodeView, InsertDeliveryItemsView, UploadByRequest, DeleteDeliveryItemsView,UpdateDeliveryItemsView, UserAreasView
+
 
 urlpatterns = [
     path('mrp_api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
@@ -17,17 +18,23 @@ urlpatterns = [
     path('roleplain/<int:pk>/', RoleFlatDetailView.as_view(), name='roleplain'),
     path('accesskey-list/', AccessKeyView.as_view(), name='accesskey-list'),
     path('for-forms/', CombinedDataView.as_view(), name='for-forms'),
+    path('get-area-option/<int:pk>/', UserAreasView.as_view(), name='get-area-option'),
+
+
     path('areainventory/<int:pk>/', InventoryCodeByAreaView.as_view(), name='area-inventory'),
     path('forecast/<int:pk>/', ForecastByInventoryCodeView.as_view(), name='forecast'),
-    path('forecast/update/<int:pk>/', UpdateForecastView.as_view(), name='update-forecast'),
-
+    path('request/<int:pk>/', InsertDeliveryItemsView.as_view(), name='update-forecast'),
+    path('update-request/', UpdateDeliveryItemsView.as_view(), name='delete-request'),
+    path('delete-request/<int:pk>/', DeleteDeliveryItemsView.as_view(), name='delete-request'),
+#481405
 
     #uploads
     path('master-data-upload/', UploadBOMMasterlist.as_view(), name='file-upload'),
     path('pos-item-upload/', PosItemsUploadView.as_view(), name='post_item-upload'),
     path('bom-item-upload/', BosItemsUploadView.as_view(), name='bom_item-upload'),
+    path('by-request-item-upload/', UploadByRequest.as_view(), name='by-request-item-upload'),
     path('sales-upload/', SalesUploadView.as_view(), name='sales-upload'),
-    path('ending-inventory-upload/', EndingInventoryUploadView.as_view(), name='ending-inventory-upload'),
+    path('ending-inventory-upload/<int:pk>/', EndingInventoryUploadView.as_view(), name='ending-inventory-upload'),
 
     # change password
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),

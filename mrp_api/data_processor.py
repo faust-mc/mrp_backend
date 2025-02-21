@@ -5,7 +5,7 @@ import pandas as pd
 from django.db.models import Sum, Max, Subquery, OuterRef, F
 from django.db import transaction
 from concurrent.futures import ThreadPoolExecutor
-from mrp_api.models import Area, Sales, PosItems, BomMasterlist, SalesReport, InitialReplenishment, EndingInventory, InventoryCode, BosItems, Forecast
+from mrp_api.models import Area, Sales, PosItems, BomMasterlist, SalesReport, InitialReplenishment, EndingInventory, InventoryCode, BosItems, Forecast, ByRequestItems
 import numpy as np
 
 scheduler = BackgroundScheduler()
@@ -78,11 +78,18 @@ def process_item(item, sales_data, area):
 
 
 def calculate_area_sales(area):
-    # start_date = datetime(2025, 1, 25).date()
-    # end_date = datetime(2025, 2, 9).date()
+    start_date = datetime(2025, 1, 25).date()
+    end_date = datetime(2025, 2, 9).date()
 
-    end_date = datetime.today().date()
-    start_date = end_date - timedelta(days=15)
+#     end_date = datetime.today().date()
+#     # Get the start of the current week (assuming the week starts on Monday)
+#     start_of_this_week = end_date - timedelta(days=end_date.weekday() + 1)  # Adjust so the week starts on Sunday
+#
+# # Subtract 3 weeks from the start of the current week
+#     start_date = start_of_this_week - timedelta(weeks=3)
+#
+#     print(f"Start date: {start_date}")
+#     print(f"End date: {start_of_this_week}")
 
     pos_items = PosItems.objects.all()
     sales_data = Sales.objects.filter(
@@ -164,7 +171,7 @@ def calculate_area_sales(area):
     print(f"Saved {len(initial_replenishment_entries)} records to InitialReplenishment.")
 
 
-    latest_inventory_code = InventoryCode.objects.filter(area=area).order_by('-created_at').first()
+    latest_inventory_code = InventoryCode.objects.filter(area=area, status__status=0).order_by('-created_at').first()
 
     if latest_inventory_code:
         latest_inventory = list(EndingInventory.objects.filter(inventory_code=latest_inventory_code).values(
@@ -244,8 +251,8 @@ def calculate_area_sales(area):
 
 def calculate_average_sales():
     print("Starting to process report")
-    areas = Area.objects.filter(location="CHOOKS FARMERS PLAZA")
-    #areas = Area.objects.all()
+    #areas = Area.objects.filter(location="CHOOKS FARMERS PLAZA")
+    areas = Area.objects.all()
     with ThreadPoolExecutor() as executor:
         executor.map(calculate_area_sales, areas)
 
@@ -254,5 +261,6 @@ def calculate_average_sales():
 for job in scheduler.get_jobs():
     scheduler.remove_job(job.id)
 
+#scheduler.add_job(calculate_average_sales, 'interval', minutes=100)
 scheduler.add_job(calculate_average_sales, 'cron', day_of_week='wed', hour=5, minute=0)
 scheduler.start()

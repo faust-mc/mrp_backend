@@ -1,6 +1,6 @@
 
 from rest_framework import serializers
-from .models import Area, ModulePermissions, Modules, Roles, Employee, Departments, AccessKey, EndingInventory, InventoryCode, BosItems, Forecast
+from .models import Area, ModulePermissions, Modules, Roles, Employee, Departments, AccessKey, EndingInventory, InventoryCode, BosItems, Forecast, DeliveryItems, DeliveryCode ,ByRequest
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import password_validation
@@ -232,31 +232,60 @@ class ForecastSerializer(serializers.ModelSerializer):
 
 
 
-class ForecastUpdateSerializer(serializers.ModelSerializer):
+
+
+
+
+class ByRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ByRequest
+        fields = '__all__'
+
+
+class DeliveryItemsSerializer(serializers.ModelSerializer):
     bom_entry_id = serializers.IntegerField(write_only=True)
     inventory_code_id = serializers.IntegerField(write_only=True)
+    first_adjustment = serializers.FloatField()
+    second_adjustment = serializers.FloatField()
+    third_adjustment= serializers.FloatField()
+    first_final_delivery = serializers.FloatField()
+    second_final_delivery = serializers.FloatField()
+    third_final_delivery = serializers.FloatField()
+    first_qty_delivery = serializers.FloatField()
+    second_qty_delivery = serializers.FloatField()
+    third_qty_delivery = serializers.FloatField()
 
     class Meta:
-        model = Forecast
-        fields = ['bom_entry_id', 'inventory_code_id', 'adjustment', 'for_final_delivery']
+        model = DeliveryItems
+        fields = ['bom_entry_id', 'inventory_code_id', 'first_adjustment','second_adjustment','third_adjustment', 'first_final_delivery','second_final_delivery','third_final_delivery','first_qty_delivery','second_qty_delivery','third_qty_delivery']
 
     def validate_bom_entry_id(self, value):
         try:
-            bos_item = BosItems.objects.get(id=value)
+            return BosItems.objects.get(id=value)
         except BosItems.DoesNotExist:
             raise serializers.ValidationError(f"BosItems with ID {value} does not exist.")
-        return bos_item
 
     def validate_inventory_code_id(self, value):
         try:
-            inventory_code = InventoryCode.objects.get(id=value)
+            return InventoryCode.objects.get(id=value)
         except InventoryCode.DoesNotExist:
             raise serializers.ValidationError(f"InventoryCode with ID {value} does not exist.")
-        return inventory_code
 
-    def update(self, instance, validated_data):
-        instance.adjustment = validated_data.get('adjustment', instance.adjustment)
-        instance.for_final_delivery = validated_data.get('for_final_delivery', instance.for_final_delivery)
+    def create(self, validated_data):
+        delivery_code, _ = DeliveryCode.objects.get_or_create(
+            inventory_code=validated_data['inventory_code_id']
+        )
 
-        instance.save()
-        return instance
+        return DeliveryItems.objects.create(
+            delivery_code=delivery_code,
+            bom_entry=validated_data['bom_entry_id'],
+            first_adjustment=validated_data['first_adjustment'],
+            second_adjustment=validated_data['second_adjustment'],
+            third_adjustment=validated_data['third_adjustment'],
+            first_final_delivery=validated_data['first_final_delivery'],
+            second_final_delivery=validated_data['second_final_delivery'],
+            third_final_delivery=validated_data['third_final_delivery'],
+            first_qty_delivery=validated_data['first_qty_delivery'],
+            second_qty_delivery=validated_data['second_qty_delivery'],
+            third_qty_delivery=validated_data['third_qty_delivery']
+        )

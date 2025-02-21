@@ -1,3 +1,4 @@
+from email.policy import default
 from random import choices
 
 from django.db import models
@@ -133,6 +134,11 @@ class PosItems(models.Model):
 	pos_item = models.CharField(max_length=30, unique=True)
 
 
+class Status(models.Model):
+	status = models.IntegerField(default=0, null=True, blank=True)
+	status_description = models.TextField(max_length=50, null=True, blank=True)
+
+
 
 class BosItems(models.Model):
 	bos_code = models.CharField(max_length=20,null=True, blank=True, unique=True)
@@ -152,6 +158,15 @@ class BomMasterlist(models.Model):
 	uom = models.CharField(max_length=10,null=True, blank=True)
 	category = models.CharField(max_length = 20,null=True, blank=True)
 	item_description = models.TextField(max_length=150,null=True, blank=True)
+
+
+class ByRequestItems(models.Model):
+	bos_code = models.CharField(max_length=20,null=True, blank=True, unique=True)
+	bos_material_description = models.TextField(max_length=150,null=True, blank=True)
+	bos_uom = models.CharField(max_length=10,null=True, blank=True)
+	category = models.CharField(max_length=8, null=True,blank=True)
+	delivery_uom = models.CharField(max_length=10,null=True, blank=True)
+	conversion = models.FloatField(null=True, blank=True)
 
 
 
@@ -206,6 +221,7 @@ class InitialReplenishment(models.Model):
 
 class InventoryCode(models.Model):
 	area = models.ForeignKey(Area, on_delete=models.CASCADE, null=True, blank=True)
+	status = models.ForeignKey(Status, on_delete=models.CASCADE, default=1,null=True, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
 	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
 
@@ -216,6 +232,8 @@ class EndingInventory(models.Model):
 	actual_ending = models.FloatField(default=0)
 	upcoming_delivery = models.FloatField(default=0, null=True, blank=True)
 
+
+
 class Forecast(models.Model):
 	inventory_code = models.ForeignKey(InventoryCode, on_delete=models.CASCADE, null=True, blank=True)
 	bom_entry = models.ForeignKey(BosItems, on_delete=models.CASCADE, related_name="bom_ending_forecast")
@@ -225,8 +243,47 @@ class Forecast(models.Model):
 	forecasted_ending_inventory = models.FloatField(default=0, null=True, blank=True)
 	converted_ending_inventory = models.FloatField(default=0, null=True, blank=True)
 	forecast = models.FloatField(default=0, null=True, blank=True)
-	adjustment = models.FloatField(default=0, null=True, blank=True)
-	for_final_delivery = models.FloatField(default=0, null=True, blank=True)
+
+
+
+
+class DeliveryCode(models.Model):
+	inventory_code = models.ForeignKey(InventoryCode, on_delete=models.CASCADE, null=True, blank=True)
+	status = models.ForeignKey(Status, on_delete=models.CASCADE, default=1,null=True, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
+	requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='requested_by')
+	approved_by  = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_by')
+
+
+class DeliveryItems(models.Model):
+	delivery_code = models.ForeignKey(DeliveryCode, on_delete=models.CASCADE, null=True, blank=True)
+	bom_entry = models.ForeignKey(BosItems, on_delete=models.CASCADE, related_name="bom_item_delivery")
+	first_adjustment = models.FloatField(default=0, null=True, blank=True)
+	second_adjustment = models.FloatField(default=0, null=True, blank=True)
+	third_adjustment = models.FloatField(default=0, null=True, blank=True)
+	first_final_delivery = models.FloatField(default=0, null=True, blank=True)
+	second_final_delivery = models.FloatField(default=0, null=True, blank=True)
+	third_final_delivery = models.FloatField(default=0, null=True, blank=True)
+	first_qty_delivery = models.FloatField(default=0, null=True, blank=True)
+	second_qty_delivery = models.FloatField(default=0, null=True, blank=True)
+	third_qty_delivery = models.FloatField(default=0, null=True, blank=True)
+
+
+
+class ByRequest(models.Model):
+	delivery_code = models.ForeignKey(DeliveryCode, on_delete=models.CASCADE, null=True, blank=True)
+	by_request_item = models.ForeignKey(ByRequestItems, on_delete=models.CASCADE, null=True, blank=True)
+	total_weekly_request = models.FloatField(default=0, null=True, blank=True)
+	first_delivery = models.FloatField(default=0, null=True, blank=True)
+	second_delivery = models.FloatField(default=0, null=True, blank=True)
+	third_delivery = models.FloatField(default=0, null=True, blank=True)
+	first_final_delivery = models.FloatField(default=0, null=True, blank=True)
+	second_final_delivery = models.FloatField(default=0, null=True, blank=True)
+	third_final_delivery = models.FloatField(default=0, null=True, blank=True)
+	first_qty_delivery = models.FloatField(default=0, null=True, blank=True)
+	second_qty_delivery = models.FloatField(default=0, null=True, blank=True)
+	third_qty_delivery = models.FloatField(default=0, null=True, blank=True)
 
 
 
