@@ -1,6 +1,6 @@
 from email.policy import default
 from random import choices
-
+from django.utils.timezone import now
 from django.db import models
 from django.contrib.auth.models import User
 
@@ -199,6 +199,7 @@ class Sales(models.Model):
 class SalesReport(models.Model):
 	sales_report_name = models.CharField(max_length=50, null=True, blank=True)
 	pos_item = models.ForeignKey(PosItems, on_delete=models.CASCADE,null=True, blank=True)
+	sales_period = models.CharField(max_length=150, null=True, blank=True)
 	dine_in_quantity = models.FloatField(null=True, blank=True)
 	take_out_quantity = models.FloatField(null=True, blank=True)
 	average_dine_in_sold = models.FloatField(null=True, blank=True)
@@ -222,8 +223,15 @@ class InitialReplenishment(models.Model):
 class InventoryCode(models.Model):
 	area = models.ForeignKey(Area, on_delete=models.CASCADE, null=True, blank=True)
 	status = models.ForeignKey(Status, on_delete=models.CASCADE, default=1,null=True, blank=True)
+	inventory_code = models.CharField(max_length=100, null=True, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
 	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
+
+	def save(self, *args, **kwargs):
+		if not self.inventory_code and self.area:
+			date_str = now().strftime("%Y%m%d")
+			self.inventory_code = f"{self.area.location.replace(' ', '_')}_{date_str}"
+			super().save(*args, **kwargs)
 
 
 class EndingInventory(models.Model):

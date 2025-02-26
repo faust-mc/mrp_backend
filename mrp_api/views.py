@@ -5,21 +5,23 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework import status, viewsets
+from rest_framework.filters import OrderingFilter
 from rest_framework.decorators import action
 from django.contrib.auth.models import User
 from django.conf import settings
 from django.contrib.auth.hashers import make_password, check_password
-from django.db.models import Q, Value
+from django.db.models import Q, Value, OuterRef, Subquery, F, Window
+from django.db.models.functions import RowNumber
 from django.db import connection, transaction
-from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, AccessKey, BomMasterlist, PosItems, Sales, UploadedFile, InventoryCode, BosItems, EndingInventory, Forecast, ByRequest, ByRequestItems, DeliveryCode, DeliveryItems
+from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, AccessKey, BomMasterlist, PosItems, Sales, UploadedFile, InventoryCode, BosItems, EndingInventory, Forecast, ByRequest, ByRequestItems, DeliveryCode, DeliveryItems, SalesReport, InitialReplenishment
 
-from .serializers import ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer, EmployeeSerializerPlain, RolesSerializerPlain, AccessKeySerializer, UserDetailSerializer,  ModulesSerializerParent, FileUploadSerializer, InventoryCodeSerializer, ForecastSerializer, DeliveryItemsSerializer,ByRequestSerializer
+from .serializers import ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer, EmployeeSerializerPlain, RolesSerializerPlain, AccessKeySerializer, UserDetailSerializer,  ModulesSerializerParent, FileUploadSerializer, InventoryCodeSerializer, ForecastSerializer, DeliveryItemsSerializer,ByRequestSerializer, EndingInventorySerializer, SalesReportSerializer, InitialReplenishmentSerializer
 
 from collections import defaultdict
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import authenticate
 from django.core.mail import send_mail
-from django.http import StreamingHttpResponse
+from django.http import StreamingHttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
 import random
 import string
@@ -338,7 +340,7 @@ class EmployeeEditView(RetrieveUpdateAPIView):
 
     def update(self, request, *args, **kwargs):
         data = request.data
-
+        print(data)
         try:
 
             employee = self.get_object()
@@ -350,32 +352,42 @@ class EmployeeEditView(RetrieveUpdateAPIView):
             user.save()
 
             employee.department = Departments.objects.get(id=data.get("department", employee.department.id))
+
             employee.cellphone_number = data.get("mobile_number", employee.cellphone_number)
+
             employee.telephone_number = data.get("telephone_number", employee.telephone_number)
+
             employee.superior = Employee.objects.filter(id=data.get("supervisor", employee.superior.id)).first()
 
-            if "role" in data:
-                role_id = data["role"]
-                role = Roles.objects.get(id=role_id)
-                employee.role = role
+
+            # if "role" in data:
+            #     role_id = data["role"]
+            #     role = Roles.objects.get(id=role_id)
+            #     employee.role = role
+            #     print(1)
 
             if "area" in data:
                 area_instances = Area.objects.filter(location__in=[area["value"] for area in data["area"]])
                 employee.area.set(area_instances)
 
+
             if "permissions" in data:
 
-                employee.module_permissions.clear()
 
+                employee.module_permissions.clear()
+                print(1)
                 modules_to_add = set()
                 for action, has_permission in data['permissions'].items():
                     if has_permission:
                         permission = ModulePermissions.objects.filter(codename=action).first()
                         if permission:
+                            print(permission.module)
+                            print()
                             employee.module_permissions.add(permission)
 
                             def get_module_hierarchy(module):
                                 hierarchy = []
+
                                 while module:
                                     hierarchy.append(module)
                                     module = module.parent_module
@@ -706,6 +718,7 @@ class UploadByRequest(APIView):
 
 class SalesUploadView(APIView):
     def get_file_hash(self, file):
+        """Generates a SHA-256 hash for the uploaded file."""
         hasher = hashlib.sha256()
         for chunk in file.chunks():
             hasher.update(chunk)
@@ -713,46 +726,52 @@ class SalesUploadView(APIView):
 
     def post(self, request):
         serializer = FileUploadSerializer(data=request.data)
-        print(request)
         if serializer.is_valid():
             file = serializer.validated_data['file']
 
+            # Check if file has already been uploaded
             file_hash = self.get_file_hash(file)
             if UploadedFile.objects.filter(file_hash=file_hash).exists():
                 return Response({"error": "🚫 This file has already been uploaded."}, status=status.HTTP_400_BAD_REQUEST)
 
             try:
+                # Read Excel file and normalize column names
                 df = pd.read_excel(file, engine='openpyxl')
-                df.columns = df.columns.str.upper()
+                df.columns = df.columns.str.strip().str.upper()  # Normalize column names
 
-
-                required_columns = [
+                required_columns = {
                     'IFS CODE', 'NAME OF OUTLET', 'OR NO.', 'CUSTOMER NAME', 'SKU CODE',
                     'QTY', 'UNIT PRICE', 'GROSS SALES', 'TYPE OF DISCOUNT', 'DISC AMOUNT',
-                    'VAT DEDUCT', 'NET SALES', 'MODE OF PAYMENT','TRANSACTION TYPE', 'NOTE', 'REMARKS', 'SALES DATE', 'TIME'
-                ]
+                    'VAT DEDUCT', 'NET SALES', 'MODE OF PAYMENT', 'TRANSACTION TYPE',
+                    'NOTE', 'REMARKS', 'SALES DATE', 'TIME'
+                }
 
-                if not all(col.upper() in df.columns for col in required_columns):
+                # Validate column presence
+                missing_columns = required_columns - set(df.columns)
+                if missing_columns:
+                    return Response({"error": f"Missing required columns: {', '.join(missing_columns)}"},
+                                    status=status.HTTP_400_BAD_REQUEST)
 
-                    return Response({"error": "Missing required columns."}, status=status.HTTP_400_BAD_REQUEST)
-
-
-                existing_or_numbers = set(Sales.objects.filter(or_number__in=df['OR NO.']).values_list('or_number', flat=True))
-
-                new_rows = df[~df['OR NO.'].isin(existing_or_numbers)]
-
-                if new_rows.empty:
-                    return Response({"error": "No new OR numbers to insert."}, status=status.HTTP_400_BAD_REQUEST)
+                # Prefetch areas and pos items to minimize queries
+                area_dict = {a.location: a for a in Area.objects.all()}
+                pos_items_dict = {p.pos_item: p for p in PosItems.objects.all()}
 
                 sales_objects = []
-                for _, row in new_rows.iterrows():
+                for _, row in df.iterrows():
                     try:
+                        # Get or create Area (Outlet)
+                        outlet = area_dict.get(row['NAME OF OUTLET'])
+                        if not outlet:
+                            outlet, _ = Area.objects.get_or_create(location=row['NAME OF OUTLET'])
+                            area_dict[row['NAME OF OUTLET']] = outlet
 
-                        outlet = Area.objects.get(location=row['NAME OF OUTLET'])
+                        # Get or create POS Item
+                        pos_item = pos_items_dict.get(row['SKU CODE'])
+                        if not pos_item:
+                            pos_item, _ = PosItems.objects.get_or_create(pos_item=row['SKU CODE'])
+                            pos_items_dict[row['SKU CODE']] = pos_item
 
-                        pos_item = PosItems.objects.get(pos_item=row['SKU CODE'])
-
-
+                        # Create sales object
                         sales_objects.append(
                             Sales(
                                 ifs_code=row['IFS CODE'],
@@ -775,11 +794,12 @@ class SalesUploadView(APIView):
                                 time=row['TIME']
                             )
                         )
-                    except (Area.DoesNotExist, PosItems.DoesNotExist):
-                        continue
 
+                    except Exception as e:
+                        print(f"⚠️ Skipping row due to error: {e}")
+
+                # Bulk insert for performance optimization
                 with transaction.atomic():
-
                     with connection.cursor() as cursor:
                         cursor.execute('ALTER TABLE mrp_api_sales DISABLE KEYS;')
 
@@ -788,6 +808,7 @@ class SalesUploadView(APIView):
                     with connection.cursor() as cursor:
                         cursor.execute('ALTER TABLE mrp_api_sales ENABLE KEYS;')
 
+                    # Save file hash after successful upload
                     UploadedFile.objects.create(file_hash=file_hash)
 
                 return Response({"message": "✅ Sales data imported successfully!"}, status=status.HTTP_201_CREATED)
@@ -800,12 +821,14 @@ class SalesUploadView(APIView):
 
 
 class EndingInventoryUploadView(APIView):
-    def post(self, request,pk):
-        print(pk)
+    def post(self, request):
+        print(request.data['area_id'])
+        print()
+
         serializer = FileUploadSerializer(data=request.data)
         if serializer.is_valid():
             file = serializer.validated_data['file']
-            area_id = request.data.get('area_id')
+            area_id = request.data['area_id']
 
             if not area_id:
                 return Response({"error": "Missing 'area_id' in request."}, status=status.HTTP_400_BAD_REQUEST)
@@ -919,17 +942,22 @@ class BosItemsUploadView(APIView):
 
 """End of upload part"""
 
+class InventoryCodeByAreaView(ListAPIView):
+    serializer_class = InventoryCodeSerializer
 
+    def get_queryset(self):
+        area_id = self.kwargs.get("area_id")
+        return InventoryCode.objects.filter(area_id=area_id)
 
-class InventoryCodeByAreaView(APIView):
-    def get(self, request, pk):
-        try:
-            area = Area.objects.get(id=pk)
-            inventory_codes = InventoryCode.objects.filter(area=area)
-            serializer = InventoryCodeSerializer(inventory_codes, many=True)
-            return Response(serializer.data)
-        except Area.DoesNotExist:
-            return Response({"detail": "Area not found"}, status=status.HTTP_404_NOT_FOUND)
+# class InventoryCodeByAreaView(APIView):
+#     def get(self, request, pk):
+#         try:
+#             area = Area.objects.get(id=pk)
+#             inventory_codes = InventoryCode.objects.filter(area=area)
+#             serializer = InventoryCodeSerializer(inventory_codes, many=True)
+#             return Response(serializer.data)
+#         except Area.DoesNotExist:
+#             return Response({"detail": "Area not found"}, status=status.HTTP_404_NOT_FOUND)
 
 
 class ForecastByInventoryCodeView(APIView):
@@ -1148,3 +1176,69 @@ class UserAreasView(APIView):
 
         user_areas = employee.area.all().values("id", "location")  # Get assigned areas
         return Response({"areas": list(user_areas)})
+
+
+
+class InventoryCodeListView(ListAPIView):
+    serializer_class = InventoryCodeSerializer
+
+    def get_queryset(self):
+        area_id = self.kwargs.get("area_id")
+        return InventoryCode.objects.filter(area_id=area_id)
+
+
+
+class EndingInventoryListView(ListAPIView):
+    serializer_class = EndingInventorySerializer
+
+
+    def get_queryset(self):
+        inventory_id = self.kwargs.get("pk")  # Get inventory_code ID from URL
+        return EndingInventory.objects.filter(inventory_code__id=inventory_id)  # Filter records
+
+
+
+
+class SalesReportListView(ListAPIView):
+    serializer_class = SalesReportSerializer
+
+    def get_queryset(self):
+
+        inventory_id = self.kwargs['inventory_id']
+        area_id = InventoryCode.objects.get(id=inventory_id).area_id
+        latest_sales = SalesReport.objects.filter(area_id=area_id).annotate(row_num=Window(expression=RowNumber(), partition_by=[F('pos_item_id')], order_by=F('created_at').desc())).filter(row_num=1).select_related('pos_item', 'area')
+
+        return latest_sales
+
+
+
+class InitialReplenishmentListView(ListAPIView):
+    def list(self, request, *args, **kwargs):
+        inventory_id = self.kwargs['inventory_id']
+        area_id = InventoryCode.objects.get(id=inventory_id).area_id
+        start_date = request.GET.get('start_date', '2025-02-26 00:00:00')
+        end_date = request.GET.get('end_date', '2025-02-27 00:00:00')
+
+        query = """
+            SELECT sr.sales_report_name, sr.created_at, bom.category, bom.bos_code_id, bom.item_description, 
+                   pos.menu_description AS pos_menu_description, pos.pos_item, ini.*
+            FROM mrp_api_salesreport AS sr
+            JOIN mrp_api_initialreplenishment AS ini ON sr.id = ini.sales_report_id
+            LEFT JOIN mrp_api_bommasterlist AS bom ON ini.bom_entry_id = bom.id
+            LEFT JOIN mrp_api_positems AS pos ON sr.pos_item_id = pos.id
+            WHERE sr.area_id = %s
+            AND sr.created_at >= %s
+            AND sr.created_at < %s
+            ORDER BY ini.id, pos.pos_item, daily_sales;
+        """
+
+        # Parameters for the query
+        params = [area_id, start_date, end_date]
+
+        # Execute the query with parameters
+        with connection.cursor() as cursor:
+            cursor.execute(query, params)
+            result = cursor.fetchall()
+            print(result)
+
+        return JsonResponse(list(result), safe=False)

@@ -1,6 +1,6 @@
 # urls.py
 from django.urls import path
-from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView, EndingInventoryUploadView, BosItemsUploadView, InventoryCodeByAreaView, ForecastByInventoryCodeView, InsertDeliveryItemsView, UploadByRequest, DeleteDeliveryItemsView,UpdateDeliveryItemsView, UserAreasView
+from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView, EndingInventoryUploadView, BosItemsUploadView, InventoryCodeByAreaView, ForecastByInventoryCodeView, InsertDeliveryItemsView, UploadByRequest, DeleteDeliveryItemsView,UpdateDeliveryItemsView, UserAreasView, EndingInventoryListView, SalesReportListView, InitialReplenishmentListView
 
 
 urlpatterns = [
@@ -19,13 +19,17 @@ urlpatterns = [
     path('accesskey-list/', AccessKeyView.as_view(), name='accesskey-list'),
     path('for-forms/', CombinedDataView.as_view(), name='for-forms'),
     path('get-area-option/<int:pk>/', UserAreasView.as_view(), name='get-area-option'),
+    path('get-area-option/<int:pk>/', UserAreasView.as_view(), name='get-area-option'),
+    path('get-inventory-items/<int:pk>/', EndingInventoryListView.as_view(), name='get-inventory-items'),
+    path('sales-report/<int:inventory_id>/', SalesReportListView.as_view(), name='sales-report-list'),
+    path('get-initial-replenishment/<int:inventory_id>/', InitialReplenishmentListView.as_view(), name='sales-report-list'),
 
-
-    path('areainventory/<int:pk>/', InventoryCodeByAreaView.as_view(), name='area-inventory'),
+    path('areainventory/<int:area_id>/', InventoryCodeByAreaView.as_view(), name='area-inventory'),
     path('forecast/<int:pk>/', ForecastByInventoryCodeView.as_view(), name='forecast'),
     path('request/<int:pk>/', InsertDeliveryItemsView.as_view(), name='update-forecast'),
     path('update-request/', UpdateDeliveryItemsView.as_view(), name='delete-request'),
     path('delete-request/<int:pk>/', DeleteDeliveryItemsView.as_view(), name='delete-request'),
+
 #481405
 
     #uploads
@@ -34,7 +38,7 @@ urlpatterns = [
     path('bom-item-upload/', BosItemsUploadView.as_view(), name='bom_item-upload'),
     path('by-request-item-upload/', UploadByRequest.as_view(), name='by-request-item-upload'),
     path('sales-upload/', SalesUploadView.as_view(), name='sales-upload'),
-    path('ending-inventory-upload/<int:pk>/', EndingInventoryUploadView.as_view(), name='ending-inventory-upload'),
+    path('ending-inventory-upload/', EndingInventoryUploadView.as_view(), name='ending-inventory-upload'),
 
     # change password
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),

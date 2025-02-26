@@ -1,6 +1,6 @@
 
 from rest_framework import serializers
-from .models import Area, ModulePermissions, Modules, Roles, Employee, Departments, AccessKey, EndingInventory, InventoryCode, BosItems, Forecast, DeliveryItems, DeliveryCode ,ByRequest
+from .models import Area, ModulePermissions, Modules, Roles, Employee, Departments, AccessKey, EndingInventory, InventoryCode, BosItems, Forecast, DeliveryItems, DeliveryCode ,ByRequest, SalesReport, PosItems, BomMasterlist, InitialReplenishment
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import password_validation
@@ -230,15 +230,54 @@ class ForecastSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+class PosItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PosItems
+        fields = ['menu_description', 'pos_item']
 
 
+class BosItemsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BosItems
+        fields = "__all__"  # This will return all fields of BosItems
 
+class EndingInventorySerializer(serializers.ModelSerializer):
+    bom_entry = BosItemsSerializer(read_only=True)  # Nesting BosItems details
+
+    class Meta:
+        model = EndingInventory
+        fields = ["id", "inventory_code", "bom_entry", "actual_ending", "upcoming_delivery"]
+
+
+class SalesReportSerializer(serializers.ModelSerializer):
+    pos_item = PosItemSerializer(read_only=True)
+    class Meta:
+        model = SalesReport
+        fields = "__all__"
 
 
 
 class ByRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = ByRequest
+        fields = '__all__'
+
+
+class BomMasterlistSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BomMasterlist
+        fields = ['item_description', 'pos_code', 'bos_code']
+
+
+
+class InitialReplenishmentSerializer(serializers.ModelSerializer):
+
+    bom_entry_pos_code = serializers.CharField(source='bom_entry.pos_code.pos_item', read_only=True)
+    bom_entry_bos_code = serializers.CharField(source='bom_entry.bos_code.bos_code', read_only=True)
+    bom_entry_item_description = serializers.CharField(source='bom_entry.item_description', read_only=True)
+
+    class Meta:
+        model = InitialReplenishment
         fields = '__all__'
 
 

@@ -24,5 +24,5 @@ def dynamic_permission_signal(sender, instance, created, **kwargs):
         for permission in permissions:
             name = f'Can {permission} {instance.slug} {model_name.lower()}'
             codename = f'{permission}_{instance.slug}'
-            data = ModulePermissions(name=name, codename=codename, content_type_id=instance.id)
+            data = ModulePermissions(name=name, codename=codename)
             data.save()
