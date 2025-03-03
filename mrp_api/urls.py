@@ -1,6 +1,6 @@
 # urls.py
 from django.urls import path
-from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView, EndingInventoryUploadView, BosItemsUploadView, InventoryCodeByAreaView, ForecastByInventoryCodeView, InsertDeliveryItemsView, UploadByRequest, DeleteDeliveryItemsView,UpdateDeliveryItemsView, UserAreasView, EndingInventoryListView, SalesReportListView, InitialReplenishmentListView
+from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView, EndingInventoryUploadView, BosItemsUploadView, InventoryCodeByAreaView, ForecastByInventoryCodeView, InsertDeliveryItemsView, UploadByRequest, DeleteDeliveryItemsView,UpdateDeliveryItemsView, UserAreasView, EndingInventoryListView, SalesReportListView, InitialReplenishmentListView, ForecastListView, ByRequestItemsListView, InventoryCodeDetailView
 
 
 urlpatterns = [
@@ -21,8 +21,11 @@ urlpatterns = [
     path('get-area-option/<int:pk>/', UserAreasView.as_view(), name='get-area-option'),
     path('get-area-option/<int:pk>/', UserAreasView.as_view(), name='get-area-option'),
     path('get-inventory-items/<int:pk>/', EndingInventoryListView.as_view(), name='get-inventory-items'),
+    path('get-inventory-code/<int:pk>/', InventoryCodeDetailView.as_view(), name='get-inventory-code'),
     path('sales-report/<int:inventory_id>/', SalesReportListView.as_view(), name='sales-report-list'),
     path('get-initial-replenishment/<int:inventory_id>/', InitialReplenishmentListView.as_view(), name='sales-report-list'),
+    path('forecast/<int:inventory_code_id>/', ForecastListView.as_view(), name='forecast-list'),
+    path('by_request_items/', ByRequestItemsListView.as_view(), name='by-request-list'),
 
     path('areainventory/<int:area_id>/', InventoryCodeByAreaView.as_view(), name='area-inventory'),
     path('forecast/<int:pk>/', ForecastByInventoryCodeView.as_view(), name='forecast'),

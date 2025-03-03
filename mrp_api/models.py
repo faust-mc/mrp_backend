@@ -231,7 +231,7 @@ class InventoryCode(models.Model):
 		if not self.inventory_code and self.area:
 			date_str = now().strftime("%Y%m%d")
 			self.inventory_code = f"{self.area.location.replace(' ', '_')}_{date_str}"
-			super().save(*args, **kwargs)
+		super().save(*args, **kwargs)
 
 
 class EndingInventory(models.Model):

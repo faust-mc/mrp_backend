@@ -281,6 +281,9 @@ class InitialReplenishmentSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
+
+
+
 class DeliveryItemsSerializer(serializers.ModelSerializer):
     bom_entry_id = serializers.IntegerField(write_only=True)
     inventory_code_id = serializers.IntegerField(write_only=True)

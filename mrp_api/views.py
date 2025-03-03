@@ -1,7 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.generics import RetrieveAPIView, ListAPIView, ListCreateAPIView ,RetrieveUpdateAPIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework import status, viewsets
@@ -1187,6 +1187,15 @@ class InventoryCodeListView(ListAPIView):
         return InventoryCode.objects.filter(area_id=area_id)
 
 
+class InventoryCodeDetailView(RetrieveAPIView):
+    serializer_class = InventoryCodeSerializer
+
+    def get(self, request, *args, **kwargs):
+        inventory_id = self.kwargs.get("pk")
+        inventory_code = get_object_or_404(InventoryCode, id=inventory_id)
+        serializer = self.get_serializer(inventory_code)
+        return Response(serializer.data)
+
 
 class EndingInventoryListView(ListAPIView):
     serializer_class = EndingInventorySerializer
@@ -1239,6 +1248,42 @@ class InitialReplenishmentListView(ListAPIView):
         with connection.cursor() as cursor:
             cursor.execute(query, params)
             result = cursor.fetchall()
-            print(result)
 
         return JsonResponse(list(result), safe=False)
+
+
+class ForecastListView(ListAPIView):
+
+    def list(self, request, *args, **kwargs):
+        inventory_code_id = self.kwargs.get('inventory_code_id')
+        if inventory_code_id:
+            forecast_data = Forecast.objects.select_related('bom_entry').filter(inventory_code_id=inventory_code_id).values(
+                'bom_entry__bos_code',
+                'bom_entry__bos_material_description',
+                'bom_entry__bundling_size',
+                'bom_entry__conversion_delivery_uom',
+                'id',
+                'inventory_code_id',
+                'average_daily_usage',
+                'days_to_last',
+                'forecast_weekly_consumption',
+                'forecasted_ending_inventory',
+                'converted_ending_inventory',
+                'forecast'
+            )
+            return JsonResponse(list(forecast_data), safe=False)
+        return JsonResponse(list(Forecast.objects.all()))
+
+
+class ByRequestItemsListView(ListAPIView):
+
+    def list(self, request, *args, **kwargs):
+        by_request_items = ByRequestItems.objects.values(
+            'bos_code',
+            'bos_material_description',
+            'bos_uom',
+            'category',
+            'delivery_uom',
+
+        )
+        return JsonResponse(list(by_request_items), safe=False)

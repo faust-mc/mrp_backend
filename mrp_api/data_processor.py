@@ -5,7 +5,7 @@ import pandas as pd
 from django.db.models import Sum, Max, Subquery, OuterRef, F
 from django.db import transaction
 from concurrent.futures import ThreadPoolExecutor
-from mrp_api.models import Area, Sales, PosItems, BomMasterlist, SalesReport, InitialReplenishment, EndingInventory, InventoryCode, BosItems, Forecast, ByRequestItems
+from mrp_api.models import Area, Sales, PosItems, BomMasterlist, SalesReport, InitialReplenishment, EndingInventory, InventoryCode, BosItems, Forecast, ByRequestItems, Status
 import numpy as np
 
 scheduler = BackgroundScheduler()
@@ -27,6 +27,8 @@ bos_items_data = list(
 
 bos_items_df = pd.DataFrame(bos_items_data)
 bos_items_df.rename(columns={'id': 'bos_code_id'},inplace=True)
+processed_status = Status.objects.get(id=2)
+
 def process_item(item, sales_data, area):
     result = []
     sales = []
@@ -243,6 +245,10 @@ def calculate_area_sales(area):
 
         else:
             print(f"No ending inventory data found for area: {area.location}")
+
+        latest_inventory_code.status_id = processed_status.id
+        latest_inventory_code.save()
+
     else:
         print(f"No inventory code found for area: {area.location}")
 
@@ -267,6 +273,6 @@ def calculate_average_sales():
 for job in scheduler.get_jobs():
     scheduler.remove_job(job.id)
 
-scheduler.add_job(calculate_average_sales, 'interval', minutes=100)
+scheduler.add_job(calculate_average_sales, 'interval', minutes=1000)
 #scheduler.add_job(calculate_average_sales, 'cron', day_of_week='wed', hour=5, minute=0)
 scheduler.start()
