@@ -1,6 +1,6 @@
 # urls.py
 from django.urls import path
-from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView, EndingInventoryUploadView, BosItemsUploadView, InventoryCodeByAreaView, ForecastByInventoryCodeView, InsertDeliveryItemsView, UploadByRequest, DeleteDeliveryItemsView,UpdateDeliveryItemsView, UserAreasView, EndingInventoryListView, SalesReportListView, InitialReplenishmentListView, ForecastListView, ByRequestItemsListView, InventoryCodeDetailView
+from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView, EndingInventoryUploadView, BosItemsUploadView, InventoryCodeByAreaView, ForecastByInventoryCodeView, InsertDeliveryItemsView, UploadByRequest, DeleteDeliveryItemsView,UpdateDeliveryItemsView, UserAreasView, EndingInventoryListView, SalesReportListView, InitialReplenishmentListView, ForecastListView, ByRequestItemsListView, InventoryCodeDetailView, SubmitInventoryView
 
 
 urlpatterns = [
@@ -25,12 +25,14 @@ urlpatterns = [
     path('sales-report/<int:inventory_id>/', SalesReportListView.as_view(), name='sales-report-list'),
     path('get-initial-replenishment/<int:inventory_id>/', InitialReplenishmentListView.as_view(), name='sales-report-list'),
     path('forecast/<int:inventory_code_id>/', ForecastListView.as_view(), name='forecast-list'),
-    path('by_request_items/', ByRequestItemsListView.as_view(), name='by-request-list'),
+    path('by_request_items/<int:inventory_id>/', ByRequestItemsListView.as_view(), name='by-request-list'),
+    path('submit/<int:idofinventory>/', SubmitInventoryView.as_view(), name='submit'),
+
 
     path('areainventory/<int:area_id>/', InventoryCodeByAreaView.as_view(), name='area-inventory'),
-    path('forecast/<int:pk>/', ForecastByInventoryCodeView.as_view(), name='forecast'),
+    #path('forecast/<int:pk>/', ForecastByInventoryCodeView.as_view(), name='forecast'),
     path('request/<int:pk>/', InsertDeliveryItemsView.as_view(), name='update-forecast'),
-    path('update-request/', UpdateDeliveryItemsView.as_view(), name='delete-request'),
+    path('update-request/<int:pk>/', UpdateDeliveryItemsView.as_view(), name='delete-request'),
     path('delete-request/<int:pk>/', DeleteDeliveryItemsView.as_view(), name='delete-request'),
 
 #481405

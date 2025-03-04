@@ -125,7 +125,7 @@ def calculate_area_sales(area):
 
 
 
-    latest_inventory_code = InventoryCode.objects.filter(area=area, status__status=0).order_by('-created_at').first()
+    latest_inventory_code = InventoryCode.objects.filter(area=area, status__status=1).order_by('-created_at').first()
 
     if latest_inventory_code:
 

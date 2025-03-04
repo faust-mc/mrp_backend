@@ -13,9 +13,9 @@ from django.contrib.auth.hashers import make_password, check_password
 from django.db.models import Q, Value, OuterRef, Subquery, F, Window
 from django.db.models.functions import RowNumber
 from django.db import connection, transaction
-from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, AccessKey, BomMasterlist, PosItems, Sales, UploadedFile, InventoryCode, BosItems, EndingInventory, Forecast, ByRequest, ByRequestItems, DeliveryCode, DeliveryItems, SalesReport, InitialReplenishment
+from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, AccessKey, BomMasterlist, PosItems, Sales, UploadedFile, InventoryCode, BosItems, EndingInventory, Forecast, ByRequest, ByRequestItems, DeliveryCode, DeliveryItems, SalesReport, InitialReplenishment, Status
 
-from .serializers import ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer, EmployeeSerializerPlain, RolesSerializerPlain, AccessKeySerializer, UserDetailSerializer,  ModulesSerializerParent, FileUploadSerializer, InventoryCodeSerializer, ForecastSerializer, DeliveryItemsSerializer,ByRequestSerializer, EndingInventorySerializer, SalesReportSerializer, InitialReplenishmentSerializer
+from .serializers import ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer, EmployeeSerializerPlain, RolesSerializerPlain, AccessKeySerializer, UserDetailSerializer,  ModulesSerializerParent, FileUploadSerializer, InventoryCodeSerializer, ForecastSerializer, DeliveryItemsSerializer,ByRequestSerializer, EndingInventorySerializer, SalesReportSerializer, InitialReplenishmentSerializer, ByRequestSerializerC, ByRequestItemsSerializer
 
 from collections import defaultdict
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -972,10 +972,14 @@ class ForecastByInventoryCodeView(APIView):
 
 
 
+
+
 class InsertDeliveryItemsView(APIView):
+
     def post(self, request, pk):
         data = request.data
-        inserted_delivery_items = []
+        print(data['by_request_items'])
+
 
         # Check if InventoryCode exists
         try:
@@ -983,79 +987,153 @@ class InsertDeliveryItemsView(APIView):
         except InventoryCode.DoesNotExist:
             return Response({"detail": f"InventoryCode with ID {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        print(inventory_code.status)
+        print("status")
 
+
+        # Get or create DeliveryCode
         delivery_code, _ = DeliveryCode.objects.get_or_create(inventory_code=inventory_code)
 
+        # Fetch all unique BomItems in a single query to reduce DB hits
+        bom_entry_ids = {item.get('bom_entry__id') for item in data.get('adjustment', [])}
+        bom_entries = BosItems.objects.in_bulk(bom_entry_ids)  # Fetch all at once
+        missing_bom_entries = bom_entry_ids - set(bom_entries.keys())
 
-        for item in data.get('adjustment', []):
-            bom_entry_id = item.get('bom_entry_id')
-            first_adjustment = item.get('first_adjustment', 0)
-            second_adjustment = item.get('first_adjustment', 0)
-            third_adjustment = item.get('first_adjustment', 0)
+        if missing_bom_entries:
+            return Response(
+                {"detail": f"BosItems with IDs {list(missing_bom_entries)} not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
 
-
-            try:
-                bom_entry = BosItems.objects.get(id=bom_entry_id)
-            except BosItems.DoesNotExist:
-                return Response({"detail": f"BosItems with ID {bom_entry_id} not found."}, status=status.HTTP_404_NOT_FOUND)
-
-            forecast = Forecast.objects.get(inventory_code=inventory_code, bom_entry=bom_entry)
-
-            first_final_delivery = max(0, math.ceil(first_adjustment / bom_entry.bundling_size) * bom_entry.bundling_size)
-            second_final_delivery = max(0, math.ceil(second_adjustment / bom_entry.bundling_size) * bom_entry.bundling_size)
-            third_final_delivery = max(0, math.ceil(third_adjustment / bom_entry.bundling_size) * bom_entry.bundling_size)
-            first_qty_delivery = first_final_delivery * bom_entry.conversion_delivery_uom
-            second_qty_delivery = second_final_delivery * bom_entry.conversion_delivery_uom
-            third_qty_delivery = third_final_delivery * bom_entry.conversion_delivery_uom
-
-            # Insert into DeliveryItems
-            delivery_item = DeliveryItems.objects.create(
+        # Prepare bulk insertion for DeliveryItems
+        delivery_items_objects = [
+            DeliveryItems(
                 delivery_code=delivery_code,
-                bom_entry=bom_entry,
-                first_adjustment=first_adjustment,
-                second_adjustment=second_adjustment,
-                third_adjustment=third_adjustment,
-                first_final_delivery=first_final_delivery,
-                second_final_delivery=second_final_delivery,
-                third_final_delivery=third_final_delivery,
-                first_qty_delivery=first_qty_delivery,
-                second_qty_delivery=second_qty_delivery,
-                third_qty_delivery=third_qty_delivery
+                bom_entry=bom_entries[item['bom_entry__id']],  # Use pre-fetched object
+                first_adjustment=item['adjustment'],
+                first_final_delivery=item['final_delivery'],
             )
-            inserted_delivery_items.append(delivery_item)
+            for item in data.get('adjustment', [])
+        ]
 
-        # Process ByRequest Items
-        by_request_objects = []
-        for by_request in data.get('by_request_items', []):
-            try:
-                by_request_item = ByRequestItems.objects.get(id=by_request['by_request_item'])
-            except ByRequestItems.DoesNotExist:
-                return Response({"detail": f"ByRequestItems with ID {by_request['by_request_item']} not found."}, status=status.HTTP_404_NOT_FOUND)
+        # Insert all DeliveryItems in bulk
+        if delivery_items_objects:
+            DeliveryItems.objects.bulk_create(delivery_items_objects)
 
-            by_request_objects.append(
-                ByRequest(
-                    delivery_code=delivery_code,
-                    by_request_item=by_request_item,
-                    total_weekly_request=by_request['first_delivery'] + by_request['second_delivery'] + by_request['third_delivery'],
-                    first_delivery=by_request['first_delivery'],
-                    second_delivery=by_request['second_delivery'],
-                    third_delivery=by_request['third_delivery'],
-                    first_qty_delivery=by_request['first_delivery'] * by_request_item.conversion,
-                    second_qty_delivery=by_request['second_delivery'] * by_request_item.conversion,
-                    third_qty_delivery=by_request['third_delivery'] * by_request_item.conversion
+        # Prepare bulk insertion for ByRequest
+        if data['by_request_items']:
+
+            by_request_objects = []
+            by_request_ids = {by_request['by_request_item'] for by_request in data.get('by_request_items', [])}
+            by_request_items = ByRequestItems.objects.in_bulk(by_request_ids)  # Fetch all at once
+
+            missing_by_requests = by_request_ids - set(by_request_items.keys())
+            if missing_by_requests:
+                return Response(
+                    {"detail": f"ByRequestItems with IDs {list(missing_by_requests)} not found."},
+                    status=status.HTTP_404_NOT_FOUND
                 )
-            )
 
-        if by_request_objects:
-            ByRequest.objects.bulk_create(by_request_objects)
+            for by_request in data.get('by_request_items', []):
+                by_request_item = by_request_items[by_request['by_request_item']]
+                by_request_objects.append(
+                    ByRequest(
+                        delivery_code=delivery_code,
+                        by_request_item=by_request_item,
+                        total_weekly_request=by_request['first_delivery'] + by_request['second_delivery'] + by_request['third_delivery'],
+                        first_delivery=by_request['first_delivery'],
+                        second_delivery=by_request['second_delivery'],
+                        third_delivery=by_request['third_delivery'],
+                        first_qty_delivery=by_request['first_delivery'] * by_request_item.conversion,
+                        second_qty_delivery=by_request['second_delivery'] * by_request_item.conversion,
+                        third_qty_delivery=by_request['third_delivery'] * by_request_item.conversion
+                    )
+                )
 
+            if by_request_objects:
+                ByRequest.objects.bulk_create(by_request_objects)
+        draft_status = Status.objects.get(id=3)
+        inventory_code.status = draft_status
+        inventory_code.save()
         return Response(
-            {"inserted_delivery_items": DeliveryItemsSerializer(inserted_delivery_items, many=True).data},
+            {"inserted_delivery_items": DeliveryItemsSerializer(delivery_items_objects, many=True).data},
             status=status.HTTP_201_CREATED
         )
 
-
 class UpdateDeliveryItemsView(APIView):
+
+    def post(self, request, pk):
+        data = request.data
+
+
+
+        # Check if InventoryCode exists
+        try:
+            inventory_code = InventoryCode.objects.get(id=pk)
+        except InventoryCode.DoesNotExist:
+            return Response({"detail": f"InventoryCode with ID {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Get or create DeliveryCode
+        delivery_code, _ = DeliveryCode.objects.get_or_create(inventory_code=inventory_code)
+
+        # Fetch all unique BomItems in a single query to reduce DB hits
+        bom_entry_ids = {item.get('bom_entry__id') for item in data.get('adjustment', [])}
+        bom_entries = BosItems.objects.in_bulk(bom_entry_ids)
+
+        missing_bom_entries = bom_entry_ids - set(bom_entries.keys())
+        if missing_bom_entries:
+            return Response(
+                {"detail": f"BosItems with IDs {list(missing_bom_entries)} not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Update or create DeliveryItems
+        delivery_items_objects = []
+        for item in data.get('adjustment', []):
+            delivery_item, created = DeliveryItems.objects.update_or_create(
+                delivery_code=delivery_code,
+                bom_entry=bom_entries[item['bom_entry__id']],  # Use pre-fetched object
+                defaults={
+                    'first_adjustment': item['adjustment'],
+                    'first_final_delivery': item['final_delivery'],
+                }
+            )
+            delivery_items_objects.append(delivery_item)
+
+        # Handle ByRequest updates
+        if data['by_request_items']:
+            by_request_ids = {by_request['by_request_item'] for by_request in data.get('by_request_items', [])}
+            by_request_items = ByRequestItems.objects.in_bulk(by_request_ids)
+
+            missing_by_requests = by_request_ids - set(by_request_items.keys())
+            if missing_by_requests:
+                return Response(
+                    {"detail": f"ByRequestItems with IDs {list(missing_by_requests)} not found."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            for by_request in data.get('by_request_items', []):
+                by_request_item = by_request_items[by_request['by_request_item']]
+                ByRequest.objects.update_or_create(
+                    delivery_code=delivery_code,
+                    by_request_item=by_request_item,
+                    defaults={
+                        'total_weekly_request': by_request['first_delivery'] + by_request['second_delivery'] + by_request['third_delivery'],
+                        'first_delivery': by_request['first_delivery'],
+                        'second_delivery': by_request['second_delivery'],
+                        'third_delivery': by_request['third_delivery'],
+                        'first_qty_delivery': by_request['first_delivery'] * by_request_item.conversion,
+                        'second_qty_delivery': by_request['second_delivery'] * by_request_item.conversion,
+                        'third_qty_delivery': by_request['third_delivery'] * by_request_item.conversion,
+                    }
+                )
+
+        return Response(
+            {"updated_delivery_items": DeliveryItemsSerializer(delivery_items_objects, many=True).data},
+            status=status.HTTP_200_OK
+        )
+
+class UpdateDeliveryItemsView1(APIView):
     def put(self, request):
 
         data = request.data
@@ -1253,37 +1331,107 @@ class InitialReplenishmentListView(ListAPIView):
 
 
 class ForecastListView(ListAPIView):
-
     def list(self, request, *args, **kwargs):
         inventory_code_id = self.kwargs.get('inventory_code_id')
+
         if inventory_code_id:
-            forecast_data = Forecast.objects.select_related('bom_entry').filter(inventory_code_id=inventory_code_id).values(
-                'bom_entry__bos_code',
-                'bom_entry__bos_material_description',
-                'bom_entry__bundling_size',
-                'bom_entry__conversion_delivery_uom',
-                'id',
-                'inventory_code_id',
-                'average_daily_usage',
-                'days_to_last',
-                'forecast_weekly_consumption',
-                'forecasted_ending_inventory',
-                'converted_ending_inventory',
-                'forecast'
+            forecast_data = list(Forecast.objects.select_related('bom_entry')
+                .filter(inventory_code_id=inventory_code_id)
+                .values(
+                    'bom_entry__id',
+                    'bom_entry__bos_code',
+                    'bom_entry__bos_material_description',
+                    'bom_entry__bundling_size',
+                    'bom_entry__conversion_delivery_uom',
+                    'id',
+                    'inventory_code_id',
+                    'average_daily_usage',
+                    'days_to_last',
+                    'forecast_weekly_consumption',
+                    'forecasted_ending_inventory',
+                    'converted_ending_inventory',
+                    'forecast'
+                )
             )
-            return JsonResponse(list(forecast_data), safe=False)
-        return JsonResponse(list(Forecast.objects.all()))
+
+            # Fetch Delivery Items Data
+            delivery_adjustments = {
+                item['bom_entry_id']: item
+                for item in DeliveryItems.objects.filter(
+                    delivery_code__inventory_code_id=inventory_code_id
+                ).values(
+                    'bom_entry_id',
+                    'first_adjustment',
+                    'first_final_delivery'
+                )
+            }
+
+            # Merge the values into forecast data
+            for item in forecast_data:
+                bom_entry_id = item['bom_entry__id']
+                delivery_data = delivery_adjustments.get(bom_entry_id, {})
+                item['first_adjustment'] = delivery_data.get('first_adjustment', 0)
+                item['first_final_delivery'] = delivery_data.get('first_final_delivery', 0)
+
+            return JsonResponse(forecast_data, safe=False)
+
+        return JsonResponse({"error": "Missing inventory_code_id"}, status=400)
+
+
 
 
 class ByRequestItemsListView(ListAPIView):
+    def get(self, request, *args, **kwargs):
+        inventory_id = self.kwargs.get("inventory_id")
+        try:
+            inventory_code = InventoryCode.objects.get(id=inventory_id)
+            delivery_code = DeliveryCode.objects.filter(inventory_code=inventory_code).first()
 
-    def list(self, request, *args, **kwargs):
-        by_request_items = ByRequestItems.objects.values(
-            'bos_code',
-            'bos_material_description',
-            'bos_uom',
-            'category',
-            'delivery_uom',
+            if delivery_code:
+                print(1)
+                # If DeliveryCode exists, fetch ByRequest items linked to it
+                by_request_items = ByRequest.objects.filter(delivery_code=delivery_code)
+                serializer = ByRequestSerializerC(by_request_items, many=True)
+            else:
+                print(2)
+                # If no DeliveryCode, fetch ByRequestItem list as labels
+                by_request_items = ByRequestItems.objects.all()
+                serializer = ByRequestItemsSerializer(by_request_items, many=True)
 
-        )
-        return JsonResponse(list(by_request_items), safe=False)
+            return Response(serializer.data)
+
+        except InventoryCode.DoesNotExist:
+            return Response([])  # Return empty list if inventory_id is invalid
+
+
+
+
+
+
+class SubmitInventoryView(APIView):
+    def post(self, request, idofinventory):
+        requested_status = Status.objects.get(id=4)
+
+
+        try:
+            inventory = InventoryCode.objects.get(id=idofinventory)
+
+            inventory.status = requested_status
+            inventory.save()
+
+            return Response(
+                {"message": "Inventory submitted successfully!"},
+                status=status.HTTP_200_OK,
+            )
+
+        except InventoryCode.DoesNotExist:
+            return Response(
+                {"error": "Inventory not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        except Exception as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

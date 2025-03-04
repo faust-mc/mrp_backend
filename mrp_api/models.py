@@ -268,14 +268,8 @@ class DeliveryItems(models.Model):
 	delivery_code = models.ForeignKey(DeliveryCode, on_delete=models.CASCADE, null=True, blank=True)
 	bom_entry = models.ForeignKey(BosItems, on_delete=models.CASCADE, related_name="bom_item_delivery")
 	first_adjustment = models.FloatField(default=0, null=True, blank=True)
-	second_adjustment = models.FloatField(default=0, null=True, blank=True)
-	third_adjustment = models.FloatField(default=0, null=True, blank=True)
 	first_final_delivery = models.FloatField(default=0, null=True, blank=True)
-	second_final_delivery = models.FloatField(default=0, null=True, blank=True)
-	third_final_delivery = models.FloatField(default=0, null=True, blank=True)
-	first_qty_delivery = models.FloatField(default=0, null=True, blank=True)
-	second_qty_delivery = models.FloatField(default=0, null=True, blank=True)
-	third_qty_delivery = models.FloatField(default=0, null=True, blank=True)
+
 
 
 
