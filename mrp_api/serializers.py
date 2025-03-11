@@ -1,6 +1,9 @@
-
+from django.conf import settings
 from rest_framework import serializers
-from .models import Area, ModulePermissions, Modules, Roles, Employee, Departments, AccessKey, EndingInventory, InventoryCode, BosItems, Forecast, DeliveryItems, DeliveryCode ,ByRequest, SalesReport, PosItems, BomMasterlist, InitialReplenishment, ByRequestItems
+
+from .models import Area, ModulePermissions, Modules, Roles, Employee, Departments, AccessKey, EndingInventory, \
+    InventoryCode, BosItems, Forecast, DeliveryItems, DeliveryCode, ByRequest, SalesReport, PosItems, BomMasterlist, \
+    InitialReplenishment, ByRequestItems, Status, SalesReportExcel
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import password_validation
@@ -215,9 +218,14 @@ class EmployeeSerializerPlain(serializers.ModelSerializer):
 class FileUploadSerializer(serializers.Serializer):
     file = serializers.FileField()
 
+class StatusSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Status
+        fields = ['status', 'status_description']
 
 
 class InventoryCodeSerializer(serializers.ModelSerializer):
+    status = StatusSerializer(read_only=True)
     class Meta:
         model = InventoryCode
         fields = '__all__'
@@ -328,3 +336,17 @@ class DeliveryItemsSerializer(serializers.ModelSerializer):
             first_adjustment=validated_data['first_adjustment'],
             first_final_delivery=validated_data['first_final_delivery'],
         )
+
+
+
+class SalesReportSerializerDL(serializers.ModelSerializer):
+    download_url = serializers.SerializerMethodField()
+
+    def get_download_url(self, obj):
+        if obj.report_file:
+            return f"{settings.MEDIA_URL}{obj.report_file}"
+        return None
+
+    class Meta:
+        model = SalesReportExcel
+        fields = '__all__'  # Include download_url in API response

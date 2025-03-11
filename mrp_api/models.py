@@ -194,10 +194,24 @@ class Sales(models.Model):
 	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
 
 
+class InventoryCode(models.Model):
+	area = models.ForeignKey(Area, on_delete=models.CASCADE, null=True, blank=True)
+	status = models.ForeignKey(Status, on_delete=models.CASCADE, default=1,null=True, blank=True)
+	inventory_code = models.CharField(max_length=100, null=True, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
+	uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='uploaded_by')
+
+	def save(self, *args, **kwargs):
+		if not self.inventory_code and self.area:
+			date_str = now().strftime("%Y%m%d")
+			self.inventory_code = f"{self.area.location.replace(' ', '_')}_{date_str}"
+		super().save(*args, **kwargs)
 
 
 class SalesReport(models.Model):
 	sales_report_name = models.CharField(max_length=50, null=True, blank=True)
+	inventory_code = models.ForeignKey(InventoryCode, on_delete=models.CASCADE,null=True, blank=True)
 	pos_item = models.ForeignKey(PosItems, on_delete=models.CASCADE,null=True, blank=True)
 	sales_period = models.CharField(max_length=150, null=True, blank=True)
 	dine_in_quantity = models.FloatField(null=True, blank=True)
@@ -211,6 +225,7 @@ class SalesReport(models.Model):
 
 class InitialReplenishment(models.Model):
 	sales_report = models.ForeignKey(SalesReport, on_delete=models.CASCADE, related_name="forecasts")
+	inventory_code = models.ForeignKey(InventoryCode, on_delete=models.CASCADE,null=True, blank=True)
 	bom_entry = models.ForeignKey(BomMasterlist, on_delete=models.CASCADE, related_name="bom_forecasts")
 	daily_sales = models.FloatField(default=0)
 	average_daily_usage = models.FloatField(default=0)
@@ -220,18 +235,7 @@ class InitialReplenishment(models.Model):
 
 
 
-class InventoryCode(models.Model):
-	area = models.ForeignKey(Area, on_delete=models.CASCADE, null=True, blank=True)
-	status = models.ForeignKey(Status, on_delete=models.CASCADE, default=1,null=True, blank=True)
-	inventory_code = models.CharField(max_length=100, null=True, blank=True)
-	created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
-	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
 
-	def save(self, *args, **kwargs):
-		if not self.inventory_code and self.area:
-			date_str = now().strftime("%Y%m%d")
-			self.inventory_code = f"{self.area.location.replace(' ', '_')}_{date_str}"
-		super().save(*args, **kwargs)
 
 
 class EndingInventory(models.Model):
@@ -258,9 +262,13 @@ class Forecast(models.Model):
 class DeliveryCode(models.Model):
 	inventory_code = models.ForeignKey(InventoryCode, on_delete=models.CASCADE, null=True, blank=True)
 	status = models.ForeignKey(Status, on_delete=models.CASCADE, default=1,null=True, blank=True)
+
 	created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
-	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
+	updated_at = models.DateTimeField(null=True, blank=True)
+	approved_at = models.DateTimeField(null=True, blank=True)
+
 	requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='requested_by')
+	updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_by')
 	approved_by  = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_by')
 
 
@@ -268,8 +276,16 @@ class DeliveryItems(models.Model):
 	delivery_code = models.ForeignKey(DeliveryCode, on_delete=models.CASCADE, null=True, blank=True)
 	bom_entry = models.ForeignKey(BosItems, on_delete=models.CASCADE, related_name="bom_item_delivery")
 	first_adjustment = models.FloatField(default=0, null=True, blank=True)
-	first_final_delivery = models.FloatField(default=0, null=True, blank=True)
+	first_qty_uom = models.CharField(max_length=20, null=True, blank=True)
 
+	second_adjustment = models.FloatField(default=0, null=True, blank=True)
+	third_adjustment = models.FloatField(default=0, null=True, blank=True)
+	first_final_delivery = models.FloatField(default=0, null=True, blank=True)
+	second_final_delivery = models.FloatField(default=0, null=True, blank=True)
+	third_final_delivery = models.FloatField(default=0, null=True, blank=True)
+	first_qty_delivery = models.FloatField(default=0, null=True, blank=True)
+	second_qty_delivery = models.FloatField(default=0, null=True, blank=True)
+	third_qty_delivery = models.FloatField(default=0, null=True, blank=True)
 
 
 
@@ -286,8 +302,22 @@ class ByRequest(models.Model):
 	first_qty_delivery = models.FloatField(default=0, null=True, blank=True)
 	second_qty_delivery = models.FloatField(default=0, null=True, blank=True)
 	third_qty_delivery = models.FloatField(default=0, null=True, blank=True)
+	first_qty_uom = models.CharField(max_length=20, null=True, blank=True)
+	second_qty_byrequest_uom = models.CharField(max_length=20, null=True, blank=True)
+	third_qty_byrequest_uom = models.CharField(max_length=20, null=True, blank=True)
+
+
+class SalesReportExcel(models.Model):
+	inventory_code = models.ForeignKey(InventoryCode, on_delete=models.CASCADE, null=True, blank=True)
+	report_file = models.FileField(upload_to='sales/', null=True, blank=True)  # Saves in "media/sales/"
 
 
 
-
-
+class UserDefinedVariables(models.Model):
+	area = models.ForeignKey(Area, on_delete=models.CASCADE, null=True, blank=True)
+	number_of_days = models.FloatField(default=0, null=True, blank=True)
+	seasonality_index = models.FloatField(default=0, null=True, blank=True)
+	days_of_consumption = models.FloatField(default=0, null=True, blank=True)
+	safety_stock = models.FloatField(default=0, null=True, blank=True)
+	ndbd = models.FloatField(default=0, null=True, blank=True)
+	number_of_request = models.IntegerField(default=1, null=True, blank=True)

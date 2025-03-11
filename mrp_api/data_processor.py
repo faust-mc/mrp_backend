@@ -5,8 +5,9 @@ import pandas as pd
 from django.db.models import Sum, Max, Subquery, OuterRef, F
 from django.db import transaction
 from concurrent.futures import ThreadPoolExecutor
-from mrp_api.models import Area, Sales, PosItems, BomMasterlist, SalesReport, InitialReplenishment, EndingInventory, InventoryCode, BosItems, Forecast, ByRequestItems, Status
+from mrp_api.models import Area, Sales, PosItems, BomMasterlist, SalesReport, InitialReplenishment, EndingInventory, InventoryCode, BosItems, Forecast, ByRequestItems, Status, SalesReportExcel
 import numpy as np
+import os
 
 scheduler = BackgroundScheduler()
 
@@ -131,6 +132,7 @@ def calculate_area_sales(area):
 
         sales_entries = [
         SalesReport(
+            inventory_code=latest_inventory_code,
             sales_report_name=f"{area.location} - {data['pos_item']}",
             pos_item=PosItems.objects.get(pos_item=data["pos_item"]),  # Ensure valid foreign key
             dine_in_quantity=data["dine_in_quantity"],
@@ -155,13 +157,15 @@ def calculate_area_sales(area):
             try:
 
                 sales_report = SalesReport.objects.filter(pos_item__pos_item=row['POS_CODE'], area=area).first()
-                bom_entry = BomMasterlist.objects.filter(id=row['MASTERLIST_ID']).first()
+
+                bom_entry = BomMasterlist.objects.filter(bos_code_id=row['BOS_CODE'], pos_code_id=row['POS_CODE']).first()
 
                 if sales_report and bom_entry:
                     initial_replenishment_entries.append(
                         InitialReplenishment(
                             sales_report=sales_report,
                             bom_entry=bom_entry,
+                            inventory_code=latest_inventory_code,
                             daily_sales=row['AVERAGE_DAILY_SALES'],
                             average_daily_usage=row['AVERAGE_DAILY_USAGE'],
                             weekly_usage=row['WEEKLY_USAGE'],
@@ -252,8 +256,17 @@ def calculate_area_sales(area):
     else:
         print(f"No inventory code found for area: {area.location}")
 
-    file_name = f"{area.location}_sales_report.xlsx"
-    with pd.ExcelWriter(file_name, engine='xlsxwriter') as writer:
+
+    inventory_code_name = latest_inventory_code.inventory_code
+    reports_folder = "media/sales"
+
+    os.makedirs(reports_folder, exist_ok=True)
+
+    file_name = f"{inventory_code_name}_sales_report.xlsx"
+    save_filename = SalesReportExcel(inventory_code=latest_inventory_code,report_file=file_name)
+    save_filename.save()
+    file_path = os.path.join(reports_folder, file_name)
+    with pd.ExcelWriter(file_path, engine='xlsxwriter') as writer:
         forecast_df.to_excel(writer, index=False, sheet_name="Initial Replenishment")
         forecast_summary.to_excel(writer, index=False, sheet_name="Forecast Summary")
         sales_df.to_excel(writer, index=False, sheet_name="Sales Data")
@@ -273,6 +286,6 @@ def calculate_average_sales():
 for job in scheduler.get_jobs():
     scheduler.remove_job(job.id)
 
-scheduler.add_job(calculate_average_sales, 'interval', minutes=1000)
+scheduler.add_job(calculate_average_sales, 'interval', minutes=1)
 #scheduler.add_job(calculate_average_sales, 'cron', day_of_week='wed', hour=5, minute=0)
 scheduler.start()

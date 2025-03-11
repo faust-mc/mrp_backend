@@ -4,11 +4,14 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.decorators import api_view
 from rest_framework import status, viewsets
 from rest_framework.filters import OrderingFilter
 from rest_framework.decorators import action
 from django.contrib.auth.models import User
 from django.conf import settings
+from django.template.loader import render_to_string
+
 from django.contrib.auth.hashers import make_password, check_password
 from django.db.models import Q, Value, OuterRef, Subquery, F, Window
 from django.db.models.functions import RowNumber
@@ -20,9 +23,13 @@ from .serializers import ModuleSerializer, EmployeeSerializer, AreaSerializer, R
 from collections import defaultdict
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import authenticate
-from django.core.mail import send_mail
+from django.utils import timezone, html
+
+from django.core.mail import send_mail, EmailMultiAlternatives
 from django.http import StreamingHttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
+from openpyxl import Workbook
+import logging
 import random
 import string
 from django.core.paginator import Paginator
@@ -35,7 +42,201 @@ import hashlib
 from rapidfuzz import process
 
 
-STRING_LIST = ["apple", "banana", "grape", "orange", "pineapple", "watermelon", "mango", "blueberry", "strawberry", "peach"]
+logger = logging.getLogger(__name__)
+
+
+def send_approval_email(mrp, file_name):
+
+    try:
+        inventory = InventoryCode.objects.get(id=mrp.id)
+
+        user_email = inventory.uploaded_by.email if inventory.uploaded_by else None
+
+        if not user_email:
+            logger.warning(f"No uploaded_by user for Inventory ID {mrp}")
+            return
+        user_email = 'npvico@gmail.com'  # Ensure `requested_by` is a User ForeignKey
+        excel_link = f"http://localhost:5173/media/sales/{file_name}"
+
+        email_subject = "MRP Approved Notification"
+        email_html_content = render_to_string("emails/mrp_approved.html", {
+            "user_name": mrp.uploaded_by.get_full_name(),
+            "inventory_code": mrp.inventory_code,
+            "excel_link": excel_link,
+        })
+        email_text_content = html.strip_tags(email_html_content)  # Fallback plain text email
+
+        #create email
+        email = EmailMultiAlternatives(
+            subject=email_subject,
+            body=email_text_content,
+            from_email="rfcaguioa@gmail.com",
+            to=[user_email]
+        )
+        email.attach_alternative(email_html_content, "text/html")
+        email.send()
+
+        logger.info(f"Approval email sent to {user_email} for MRP {mrp.id}")
+
+    except Exception as e:
+        logger.exception(f"Error sending approval email for MRP {mrp.id}: {e}")
+
+
+@api_view(["POST"])
+def approve_mrp(request, idofinventory):
+    try:
+        mrp = InventoryCode.objects.get(id=idofinventory)
+
+        delivery_code = DeliveryCode.objects.filter(inventory_code=mrp).select_related("requested_by").first()
+        mrp.status = Status.objects.get(id=5)
+        mrp.save()
+        file_name=update_sales_report(mrp,delivery_code)
+        send_approval_email(mrp, file_name)
+
+        return Response({"success": True, "message": "MRP approved successfully."})
+    except InventoryCode.DoesNotExist:
+        logger.error(f"MRP with ID {idofinventory} not found.")
+        return Response({"success": False, "message": "MRP not found."}, status=404)
+    except Exception as e:
+        logger.exception(f"Unexpected error approving MRP {idofinventory}: {e}")
+        return Response({"success": False, "message": "An error occurred."}, status=500)
+
+
+
+@api_view(["POST"])
+def ammend_mrp(request, idofinventory):
+    try:
+        ammend_status = Status.objects.get(id=3)
+        inventory = InventoryCode.objects.get(id=idofinventory)
+        inventory.status = ammend_status
+        inventory.save()
+
+        delivery_code = DeliveryCode.objects.filter(inventory_code=inventory).first()
+        user_message = request.data.get("message", "No additional details provided.")
+
+        if delivery_code and delivery_code.requested_by and delivery_code.requested_by.email:
+            send_mail(
+                subject="MRP Amendment Notification",
+                message=f"""Hello {delivery_code.requested_by.username},\n
+                    Your MRP request with Inventory ID {inventory.id} needs amendment.\n\n
+                    Message: {user_message}\n
+                    Please take the necessary action.\n\n
+                    Best Regards,\nYour Team""",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[delivery_code.requested_by.email],
+                fail_silently=False,
+            )
+
+        return Response({"message": "Inventory status updated and email sent"}, status=status.HTTP_200_OK)
+
+    except InventoryCode.DoesNotExist:
+        return Response({"error": "Inventory not found"}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+def update_sales_report(mrp, delivery_code):
+
+    try:
+        inventory_code_name = mrp.inventory_code  # Adjust field name if needed
+        file_name = f"{inventory_code_name}_sales_report.xlsx"
+
+        file_path = os.path.join(settings.SALES_FILES_ROOT, file_name)
+
+        if not os.path.exists(file_path):
+            logger.warning(f"⚠️ File {file_name} not found in {settings.SALES_FILES_ROOT}. Skipping update.")
+            return
+        delivery_items_data = list(
+            DeliveryItems.objects.filter(delivery_code=delivery_code)
+            .values("bom_entry__bos_code", "bom_entry__bos_material_description",
+                    "first_adjustment", "second_adjustment", "third_adjustment",
+                    "first_final_delivery", "second_final_delivery", "third_final_delivery",
+                    "first_qty_delivery", "second_qty_delivery", "third_qty_delivery", "first_qty_uom")
+        )
+
+
+        by_request_items_data = list(
+            ByRequest.objects.filter(delivery_code=delivery_code)
+            .values("by_request_item__bos_code", "by_request_item__bos_material_description",
+                    "total_weekly_request",
+                    "first_delivery", "second_delivery", "third_delivery",
+                    "first_final_delivery", "second_final_delivery", "third_final_delivery",
+                    "first_qty_delivery", "second_qty_delivery", "third_qty_delivery", "first_qty_uom")
+        )
+
+
+        delivery_items_df = pd.DataFrame(delivery_items_data)
+        by_request_items_df = pd.DataFrame(by_request_items_data)
+
+        delivery_items_df.rename(columns={
+            "bom_entry__bos_code": "BOS Code",
+            "bom_entry__bos_material_description": "Material Description",
+            "first_adjustment": "Adjustment 1",
+            "second_adjustment": "Adjustment 2",
+            "third_adjustment": "Adjustment 3",
+            "first_final_delivery": "Final Delivery 1",
+            "second_final_delivery": "Final Delivery 2",
+            "third_final_delivery": "Final Delivery 3",
+            "first_qty_delivery": "Quantity Delivered 1",
+            "second_qty_delivery": "Quantity Delivered 2",
+            "third_qty_delivery": "Quantity Delivered 3",
+            "first_qty_uom": "Quantity For Delivery",
+        }, inplace=True)
+
+        by_request_items_df.rename(columns={
+            "by_request_item__bos_code": "BOS Code",
+            "by_request_item__bos_material_description": "Material Description",
+            "total_weekly_request": "Total Weekly Request",
+            "first_delivery": "Delivery 1",
+            "second_delivery": "Delivery 2",
+            "third_delivery": "Delivery 3",
+            "first_final_delivery": "Final Delivery 1",
+            "second_final_delivery": "Final Delivery 2",
+            "third_final_delivery": "Final Delivery 3",
+            "first_qty_delivery": "Quantity Delivered 1",
+            "second_qty_delivery": "Quantity Delivered 2",
+            "third_qty_delivery": "Quantity Delivered 3",
+            "first_qty_uom": "Quantity For Delivery",
+        }, inplace=True)
+
+
+        delivery_selected = delivery_items_df[
+            ["BOS Code", "Material Description", "Quantity For Delivery"]
+        ].copy()
+        by_request_selected = by_request_items_df[
+            ["BOS Code", "Material Description", "Quantity For Delivery"]
+        ].copy()
+
+        # add an identifier column to distinguish sections
+        by_request_selected["Category"] = "By Request"
+
+        # create a boundary row
+        boundary_row = pd.DataFrame({
+            "BOS Code": ["BOS Code"],
+            "Material Description": ["Material Description"],
+            "Quantity For Delivery": ["Quantity For Delivery"],
+
+            "Category": ["Boundary"]
+        })
+
+        #combine DataFrames with the boundary
+        final_df = pd.concat([delivery_selected, boundary_row, by_request_selected], ignore_index=True)
+
+        with pd.ExcelWriter(file_path, engine="openpyxl", mode="a", if_sheet_exists="replace") as writer:
+            if not delivery_items_df.empty:
+                delivery_items_df.to_excel(writer, index=False, sheet_name="Delivery Items")
+            if not by_request_items_df.empty:
+                by_request_items_df.to_excel(writer, index=False, sheet_name="By Request Items")
+            if not final_df.empty:
+                final_df.to_excel(writer, index=False, sheet_name="Consolidated Reports")
+
+        logger.info(f"✅ Updated {file_name} with Delivery Items & By Request Items.")
+        return file_name
+
+    except Exception as e:
+        logger.error(f"❌ Error updating sales report for {mrp.inventory_code}: {e}")
+
 
 def fuzzy_match(query, choices, limit=3, threshold=70):
     matches = process.extract(query, choices, limit=limit, score_cutoff=threshold)
@@ -48,12 +249,12 @@ class CustomTokenObtainPairView(TokenObtainPairView):
         username = request.data.get('username')
         password = request.data.get('password')
 
-        #check if the user exists
+
         user = User.objects.filter(username=username).first()
         if not user:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        #check if the user is associated with a CompanyUser instance
+
         try:
             employee = Employee.objects.get(user=user)
         except Employee.DoesNotExist:
@@ -76,7 +277,6 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 'access': str(refresh.access_token),
             }, status=status.HTTP_200_OK)
         else:
-            #increment login attempts if authentication fails
             employee.attempts += 1
             employee.save()
 
@@ -237,9 +437,7 @@ class EmployeeDetailView(APIView):
 
     def get(self, request, pk):
         try:
-
             user = User.objects.get(pk=pk)
-
             serializer = UserDetailSerializer(user)
             return Response(serializer.data)
 
@@ -252,9 +450,7 @@ class CombinedModuleListView(APIView):
     def get(self, request):
         modules_with_no_submodules = Modules.objects.filter(submodules__isnull=True)
         submodules = Modules.objects.all()
-      
         modules = list(modules_with_no_submodules) + list(submodules)
-       
         serializer = ModuleSerializer(modules, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -264,7 +460,6 @@ class AreaListView(ListAPIView):
     def get(self, request):
         area = Area.objects.all()
         serializer = AreaSerializer(area, many=True)
-        
         return Response(serializer.data)
 
 
@@ -278,7 +473,6 @@ class RoleListCreate(ListCreateAPIView):
 
     def perform_create(self, serializer):
         role_instance = serializer.save()
-
         data = self.request.data
         if 'area' in data:
             areas = Area.objects.filter(location__in=[item['value'] for item in data['area']])
@@ -340,9 +534,8 @@ class EmployeeEditView(RetrieveUpdateAPIView):
 
     def update(self, request, *args, **kwargs):
         data = request.data
-        print(data)
-        try:
 
+        try:
             employee = self.get_object()
             user = employee.user
 
@@ -375,31 +568,23 @@ class EmployeeEditView(RetrieveUpdateAPIView):
 
 
                 employee.module_permissions.clear()
-                print(1)
                 modules_to_add = set()
                 for action, has_permission in data['permissions'].items():
                     if has_permission:
                         permission = ModulePermissions.objects.filter(codename=action).first()
                         if permission:
-                            print(permission.module)
-                            print()
                             employee.module_permissions.add(permission)
-
                             def get_module_hierarchy(module):
                                 hierarchy = []
-
                                 while module:
                                     hierarchy.append(module)
                                     module = module.parent_module
                                 return hierarchy
-
                             module_hierarchy = get_module_hierarchy(permission.module)
                             modules_to_add.update(module_hierarchy)
 
                 employee.modules.set(modules_to_add)
-
             employee.save()
-
             return Response(EmployeeSerializer(employee).data, status=status.HTTP_200_OK)
 
         except Exception as e:
@@ -514,7 +699,6 @@ class ChangePasswordView(APIView):
 
             user.set_password(new_password)
             user.save()
-
             return Response({"detail": "Password changed successfully."}, status=status.HTTP_200_OK)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -566,7 +750,6 @@ class PosItemsUploadView(APIView):
             file = serializer.validated_data['file']
             try:
                 df = pd.read_excel(file, engine='openpyxl')
-
                 if 'POS CODE' not in df.columns or 'MENU - DESCRIPTION' not in df.columns:
                     return Response({"error": "Missing 'sku_code' or 'sku_description' columns."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -659,25 +842,20 @@ class UploadByRequest(APIView):
         if serializer.is_valid():
             file = serializer.validated_data['file']
             try:
-                # Read Excel file
                 df = pd.read_excel(file, engine='openpyxl', sheet_name='BY REQUEST', header=6)
-                print(df)
-                # Define required columns
+
                 required_columns = ['BOS MATCODE', 'BOS MATERIAL DESCRIPTION', 'BOS UOM', 'COLD/DRY/FOR PR', 'DELIVERY UOM']
                 missing_columns = [col for col in required_columns if col not in df.columns]
                 if missing_columns:
                     return Response({"error": f"Missing columns: {', '.join(missing_columns)}"}, status=status.HTTP_400_BAD_REQUEST)
 
-                # Replace NaN with None for Django compatibility
-                df = df.where(pd.notna(df), None)
 
-                # Convert BOS MATCODE to string (to prevent errors due to mixed types)
+                df = df.where(pd.notna(df), None)
                 df['BOS MATCODE'] = df['BOS MATCODE'].astype(str)
 
-                # Fetch existing records to prevent duplicates
                 existing_bos_codes = set(ByRequestItems.objects.filter(bos_code__in=df['BOS MATCODE']).values_list('bos_code', flat=True))
 
-                # Prepare data for bulk insert
+
                 new_entries = []
                 for _, row in df.iterrows():
                     if row['BOS MATCODE'] not in existing_bos_codes:  # Avoid inserting duplicates
@@ -691,7 +869,7 @@ class UploadByRequest(APIView):
                             )
                         )
 
-                # Bulk insert in chunks
+
                 chunk_size = 1000
                 with transaction.atomic():
                     with connection.cursor() as cursor:
@@ -729,13 +907,11 @@ class SalesUploadView(APIView):
         if serializer.is_valid():
             file = serializer.validated_data['file']
 
-            # Check if file has already been uploaded
             file_hash = self.get_file_hash(file)
             if UploadedFile.objects.filter(file_hash=file_hash).exists():
                 return Response({"error": "🚫 This file has already been uploaded."}, status=status.HTTP_400_BAD_REQUEST)
 
             try:
-                # Read Excel file and normalize column names
                 df = pd.read_excel(file, engine='openpyxl')
                 df.columns = df.columns.str.strip().str.upper()  # Normalize column names
 
@@ -746,32 +922,32 @@ class SalesUploadView(APIView):
                     'NOTE', 'REMARKS', 'SALES DATE', 'TIME'
                 }
 
-                # Validate column presence
+
                 missing_columns = required_columns - set(df.columns)
                 if missing_columns:
                     return Response({"error": f"Missing required columns: {', '.join(missing_columns)}"},
                                     status=status.HTTP_400_BAD_REQUEST)
 
-                # Prefetch areas and pos items to minimize queries
+
                 area_dict = {a.location: a for a in Area.objects.all()}
                 pos_items_dict = {p.pos_item: p for p in PosItems.objects.all()}
 
                 sales_objects = []
                 for _, row in df.iterrows():
                     try:
-                        # Get or create Area (Outlet)
+
                         outlet = area_dict.get(row['NAME OF OUTLET'])
                         if not outlet:
                             outlet, _ = Area.objects.get_or_create(location=row['NAME OF OUTLET'])
                             area_dict[row['NAME OF OUTLET']] = outlet
 
-                        # Get or create POS Item
+
                         pos_item = pos_items_dict.get(row['SKU CODE'])
                         if not pos_item:
                             pos_item, _ = PosItems.objects.get_or_create(pos_item=row['SKU CODE'])
                             pos_items_dict[row['SKU CODE']] = pos_item
 
-                        # Create sales object
+
                         sales_objects.append(
                             Sales(
                                 ifs_code=row['IFS CODE'],
@@ -798,7 +974,7 @@ class SalesUploadView(APIView):
                     except Exception as e:
                         print(f"⚠️ Skipping row due to error: {e}")
 
-                # Bulk insert for performance optimization
+
                 with transaction.atomic():
                     with connection.cursor() as cursor:
                         cursor.execute('ALTER TABLE mrp_api_sales DISABLE KEYS;')
@@ -808,7 +984,7 @@ class SalesUploadView(APIView):
                     with connection.cursor() as cursor:
                         cursor.execute('ALTER TABLE mrp_api_sales ENABLE KEYS;')
 
-                    # Save file hash after successful upload
+
                     UploadedFile.objects.create(file_hash=file_hash)
 
                 return Response({"message": "✅ Sales data imported successfully!"}, status=status.HTTP_201_CREATED)
@@ -822,8 +998,7 @@ class SalesUploadView(APIView):
 
 class EndingInventoryUploadView(APIView):
     def post(self, request):
-        print(request.data['area_id'])
-        print()
+        print(request.user)
 
         serializer = FileUploadSerializer(data=request.data)
         if serializer.is_valid():
@@ -836,12 +1011,16 @@ class EndingInventoryUploadView(APIView):
             area = Area.objects.filter(id=area_id).first()
             if not area:
                 return Response({"error": f"Area ID {area_id} not found."}, status=status.HTTP_400_BAD_REQUEST)
+            if InventoryCode.objects.filter(area=area, status__lt=5).exists():
+                return Response(
+                    {"error": "Cannot create inventory code. Some inventory codes in this area have a pending status."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-            inventory_code = InventoryCode.objects.create(area=area)
+            inventory_code = InventoryCode.objects.create(area=area, uploaded_by=request.user)
 
             try:
                 df = pd.read_excel(file, engine='openpyxl')
-
                 required_columns = ["BOS MATCODE", "BOS MATERIAL DESCRIPTION", "QTY", "COLD/DRY/FOR PR"]
                 if not all(col in df.columns for col in required_columns):
                     return Response({"error": "Missing required columns."}, status=status.HTTP_400_BAD_REQUEST)
@@ -892,7 +1071,6 @@ class BosItemsUploadView(APIView):
             file = serializer.validated_data['file']
             try:
                 df = pd.read_excel(file, engine='openpyxl')
-
                 required_columns = {
                     "BOS MATCODE": "bos_code",
                     "BOS MATERIAL DESCRIPTION": "bos_material_description",
@@ -972,29 +1150,21 @@ class ForecastByInventoryCodeView(APIView):
 
 
 
-
-
 class InsertDeliveryItemsView(APIView):
 
     def post(self, request, pk):
         data = request.data
-        print(data['by_request_items'])
 
-
-        # Check if InventoryCode exists
         try:
             inventory_code = InventoryCode.objects.get(id=pk)
         except InventoryCode.DoesNotExist:
             return Response({"detail": f"InventoryCode with ID {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        print(inventory_code.status)
-        print("status")
+        delivery_code = DeliveryCode.objects.create(
+            inventory_code=inventory_code,
+            requested_by=request.user
+        )
 
-
-        # Get or create DeliveryCode
-        delivery_code, _ = DeliveryCode.objects.get_or_create(inventory_code=inventory_code)
-
-        # Fetch all unique BomItems in a single query to reduce DB hits
         bom_entry_ids = {item.get('bom_entry__id') for item in data.get('adjustment', [])}
         bom_entries = BosItems.objects.in_bulk(bom_entry_ids)  # Fetch all at once
         missing_bom_entries = bom_entry_ids - set(bom_entries.keys())
@@ -1005,27 +1175,27 @@ class InsertDeliveryItemsView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # Prepare bulk insertion for DeliveryItems
         delivery_items_objects = [
             DeliveryItems(
                 delivery_code=delivery_code,
                 bom_entry=bom_entries[item['bom_entry__id']],  # Use pre-fetched object
                 first_adjustment=item['adjustment'],
                 first_final_delivery=item['final_delivery'],
+                first_qty_delivery=item['quantity_for_delivery'],
+                first_qty_uom = f"{item['quantity_for_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['quantity_for_delivery'] else "-"
+
             )
             for item in data.get('adjustment', [])
         ]
 
-        # Insert all DeliveryItems in bulk
         if delivery_items_objects:
             DeliveryItems.objects.bulk_create(delivery_items_objects)
 
-        # Prepare bulk insertion for ByRequest
         if data['by_request_items']:
 
             by_request_objects = []
             by_request_ids = {by_request['by_request_item'] for by_request in data.get('by_request_items', [])}
-            by_request_items = ByRequestItems.objects.in_bulk(by_request_ids)  # Fetch all at once
+            by_request_items = ByRequestItems.objects.in_bulk(by_request_ids)
 
             missing_by_requests = by_request_ids - set(by_request_items.keys())
             if missing_by_requests:
@@ -1046,7 +1216,8 @@ class InsertDeliveryItemsView(APIView):
                         third_delivery=by_request['third_delivery'],
                         first_qty_delivery=by_request['first_delivery'] * by_request_item.conversion,
                         second_qty_delivery=by_request['second_delivery'] * by_request_item.conversion,
-                        third_qty_delivery=by_request['third_delivery'] * by_request_item.conversion
+                        third_qty_delivery=by_request['third_delivery'] * by_request_item.conversion,
+                        first_qty_uom=f'{by_request['first_delivery'] * by_request_item.conversion} {by_request_item.bos_uom}' if by_request['first_delivery'] else "-"
                     )
                 )
 
@@ -1065,18 +1236,17 @@ class UpdateDeliveryItemsView(APIView):
     def post(self, request, pk):
         data = request.data
 
-
-
-        # Check if InventoryCode exists
         try:
             inventory_code = InventoryCode.objects.get(id=pk)
         except InventoryCode.DoesNotExist:
             return Response({"detail": f"InventoryCode with ID {pk} not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        # Get or create DeliveryCode
-        delivery_code, _ = DeliveryCode.objects.get_or_create(inventory_code=inventory_code)
 
-        # Fetch all unique BomItems in a single query to reduce DB hits
+        delivery_code = DeliveryCode.objects.get(inventory_code=inventory_code)
+        delivery_code.updated_by = request.user
+        delivery_code.updated_at = timezone.now()
+        delivery_code.save()
+
         bom_entry_ids = {item.get('bom_entry__id') for item in data.get('adjustment', [])}
         bom_entries = BosItems.objects.in_bulk(bom_entry_ids)
 
@@ -1087,20 +1257,23 @@ class UpdateDeliveryItemsView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # Update or create DeliveryItems
         delivery_items_objects = []
         for item in data.get('adjustment', []):
             delivery_item, created = DeliveryItems.objects.update_or_create(
                 delivery_code=delivery_code,
+
                 bom_entry=bom_entries[item['bom_entry__id']],  # Use pre-fetched object
                 defaults={
                     'first_adjustment': item['adjustment'],
                     'first_final_delivery': item['final_delivery'],
-                }
+                    'first_qty_delivery': item['quantity_for_delivery'],
+                    'first_qty_uom' : f"{item['quantity_for_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['quantity_for_delivery'] else "-"
+                },
+
             )
             delivery_items_objects.append(delivery_item)
 
-        # Handle ByRequest updates
+
         if data['by_request_items']:
             by_request_ids = {by_request['by_request_item'] for by_request in data.get('by_request_items', [])}
             by_request_items = ByRequestItems.objects.in_bulk(by_request_ids)
@@ -1116,6 +1289,7 @@ class UpdateDeliveryItemsView(APIView):
                 by_request_item = by_request_items[by_request['by_request_item']]
                 ByRequest.objects.update_or_create(
                     delivery_code=delivery_code,
+
                     by_request_item=by_request_item,
                     defaults={
                         'total_weekly_request': by_request['first_delivery'] + by_request['second_delivery'] + by_request['third_delivery'],
@@ -1125,6 +1299,7 @@ class UpdateDeliveryItemsView(APIView):
                         'first_qty_delivery': by_request['first_delivery'] * by_request_item.conversion,
                         'second_qty_delivery': by_request['second_delivery'] * by_request_item.conversion,
                         'third_qty_delivery': by_request['third_delivery'] * by_request_item.conversion,
+                        'first_qty_uom': f'{by_request['first_delivery'] * by_request_item.conversion} {by_request_item.bos_uom}' if by_request['first_delivery'] else "-"
                     }
                 )
 
@@ -1132,96 +1307,6 @@ class UpdateDeliveryItemsView(APIView):
             {"updated_delivery_items": DeliveryItemsSerializer(delivery_items_objects, many=True).data},
             status=status.HTTP_200_OK
         )
-
-class UpdateDeliveryItemsView1(APIView):
-    def put(self, request):
-
-        data = request.data
-        updated_delivery_items = []
-        updated_by_request_items = []
-
-        for item in data.get('adjustment', []):
-            delivery_item_id = item.get('delivery_item_id')
-            first_adjustment = item.get('first_adjustment', 0)
-            second_adjustment = item.get('second_adjustment', 0)
-            third_adjustment = item.get('third_adjustment', 0)
-
-            try:
-                delivery_item = DeliveryItems.objects.get(id=delivery_item_id)
-            except DeliveryItems.DoesNotExist:
-                return Response({"detail": f"DeliveryItem with ID {delivery_item_id} not found."}, status=status.HTTP_404_NOT_FOUND)
-            bom_entry = delivery_item.bom_entry
-            first_final_delivery = max(0, math.ceil(first_adjustment / bom_entry.bundling_size) * bom_entry.bundling_size)
-            second_final_delivery = max(0, math.ceil(second_adjustment / bom_entry.bundling_size) * bom_entry.bundling_size)
-            third_final_delivery = max(0, math.ceil(third_adjustment / bom_entry.bundling_size) * bom_entry.bundling_size)
-
-            first_qty_delivery = first_final_delivery * bom_entry.conversion_delivery_uom
-            second_qty_delivery = second_final_delivery * bom_entry.conversion_delivery_uom
-            third_qty_delivery = third_final_delivery * bom_entry.conversion_delivery_uom
-
-            delivery_item.first_adjustment = first_adjustment
-            delivery_item.second_adjustment = second_adjustment
-            delivery_item.third_adjustment = third_adjustment
-
-            delivery_item.first_final_delivery = first_final_delivery
-            delivery_item.second_final_delivery = second_final_delivery
-            delivery_item.third_final_delivery = third_final_delivery
-
-            delivery_item.first_qty_delivery = first_qty_delivery
-            delivery_item.second_qty_delivery = second_qty_delivery
-            delivery_item.third_qty_delivery = third_qty_delivery
-
-            updated_delivery_items.append(delivery_item)
-
-        if updated_delivery_items:
-            DeliveryItems.objects.bulk_update(
-                updated_delivery_items,
-                [
-                    "first_adjustment", "second_adjustment", "third_adjustment",
-                    "first_final_delivery", "second_final_delivery", "third_final_delivery",
-                    "first_qty_delivery", "second_qty_delivery", "third_qty_delivery"
-                ]
-            )
-
-        for by_request in data.get('by_request_items', []):
-            by_request_item_id = by_request.get('by_request_item')
-
-            try:
-                by_request_item = ByRequest.objects.get(id=by_request_item_id)
-            except ByRequest.DoesNotExist:
-                return Response({"detail": f"ByRequestItem with ID {by_request_item_id} not found."}, status=status.HTTP_404_NOT_FOUND)
-
-
-            total_weekly_request = by_request['first_delivery'] + by_request['second_delivery'] + by_request['third_delivery']
-
-            by_request_item.first_delivery = by_request['first_delivery']
-            by_request_item.second_delivery = by_request['second_delivery']
-            by_request_item.third_delivery = by_request['third_delivery']
-            by_request_item.total_weekly_request = total_weekly_request
-            by_request_item.first_qty_delivery = by_request['first_delivery'] * by_request_item.by_request_item.conversion
-            by_request_item.second_qty_delivery = by_request['second_delivery'] * by_request_item.by_request_item.conversion
-            by_request_item.third_qty_delivery = by_request['third_delivery'] * by_request_item.by_request_item.conversion
-
-            updated_by_request_items.append(by_request_item)
-
-        if updated_by_request_items:
-            ByRequest.objects.bulk_update(
-                updated_by_request_items,
-                [
-                    "first_delivery", "second_delivery", "third_delivery",
-                    "total_weekly_request", "first_qty_delivery", "second_qty_delivery", "third_qty_delivery"
-                ]
-            )
-
-        return Response(
-            {
-                "detail": "DeliveryItems and ByRequestItems updated successfully.",
-                "updated_delivery_items": DeliveryItemsSerializer(updated_delivery_items, many=True).data,
-                "updated_by_request_items": ByRequestSerializer(updated_by_request_items, many=True).data
-            },
-            status=status.HTTP_200_OK
-        )
-
 
 
 class DeleteDeliveryItemsView(APIView):
@@ -1238,12 +1323,10 @@ class DeleteDeliveryItemsView(APIView):
 
 
 
-
 class UserAreasView(APIView):
     permission_classes = [IsAuthenticated]  # Require authentication
 
     def get(self, request,pk):
-
         if not pk:
             return Response({"error": "User ID is required"}, status=400)
 
@@ -1284,16 +1367,20 @@ class EndingInventoryListView(ListAPIView):
         return EndingInventory.objects.filter(inventory_code__id=inventory_id)  # Filter records
 
 
-
-
 class SalesReportListView(ListAPIView):
     serializer_class = SalesReportSerializer
 
     def get_queryset(self):
-
         inventory_id = self.kwargs['inventory_id']
-        area_id = InventoryCode.objects.get(id=inventory_id).area_id
-        latest_sales = SalesReport.objects.filter(area_id=area_id).annotate(row_num=Window(expression=RowNumber(), partition_by=[F('pos_item_id')], order_by=F('created_at').desc())).filter(row_num=1).select_related('pos_item', 'area')
+
+        latest_sales = SalesReport.objects.filter(inventory_code_id=inventory_id) \
+            .annotate(row_num=Window(
+                expression=RowNumber(),
+                partition_by=[F('pos_item_id')],
+                order_by=F('created_at').desc()
+            )) \
+            .filter(row_num=1) \
+            .select_related('pos_item', 'area', 'inventory_code')
 
         return latest_sales
 
@@ -1302,25 +1389,24 @@ class SalesReportListView(ListAPIView):
 class InitialReplenishmentListView(ListAPIView):
     def list(self, request, *args, **kwargs):
         inventory_id = self.kwargs['inventory_id']
+
         area_id = InventoryCode.objects.get(id=inventory_id).area_id
         start_date = request.GET.get('start_date', '2025-02-26 00:00:00')
         end_date = request.GET.get('end_date', '2025-02-27 00:00:00')
 
         query = """
-            SELECT sr.sales_report_name, sr.created_at, bom.category, bom.bos_code_id, bom.item_description, 
-                   pos.menu_description AS pos_menu_description, pos.pos_item, ini.*
-            FROM mrp_api_salesreport AS sr
-            JOIN mrp_api_initialreplenishment AS ini ON sr.id = ini.sales_report_id
-            LEFT JOIN mrp_api_bommasterlist AS bom ON ini.bom_entry_id = bom.id
-            LEFT JOIN mrp_api_positems AS pos ON sr.pos_item_id = pos.id
-            WHERE sr.area_id = %s
-            AND sr.created_at >= %s
-            AND sr.created_at < %s
-            ORDER BY ini.id, pos.pos_item, daily_sales;
+            SELECT sr.sales_report_name,sr.created_at,bom.category, bom.bos_code_id,bom.item_description, pos.menu_description as pos_menu_description, pos.pos_item,  ini.*
+            FROM mrp_api_salesreport as sr
+            join mrp_api_initialreplenishment as ini on sr.id = ini.sales_report_id
+            left join mrp_api_bommasterlist as bom on ini.bom_entry_id = bom.id
+            left join mrp_api_positems as pos on sr.pos_item_id = pos.id
+            left join mrp_api_inventorycode ic on sr.area_id = ic.inventory_code
+            where ini.inventory_code_id = %s
+            ORDER BY pos.pos_item,daily_sales;
+
         """
 
-        # Parameters for the query
-        params = [area_id, start_date, end_date]
+        params = [inventory_id]
 
         # Execute the query with parameters
         with connection.cursor() as cursor:
@@ -1340,6 +1426,7 @@ class ForecastListView(ListAPIView):
                 .values(
                     'bom_entry__id',
                     'bom_entry__bos_code',
+                    'bom_entry__bos_uom',
                     'bom_entry__bos_material_description',
                     'bom_entry__bundling_size',
                     'bom_entry__conversion_delivery_uom',
@@ -1354,7 +1441,6 @@ class ForecastListView(ListAPIView):
                 )
             )
 
-            # Fetch Delivery Items Data
             delivery_adjustments = {
                 item['bom_entry_id']: item
                 for item in DeliveryItems.objects.filter(
@@ -1366,7 +1452,6 @@ class ForecastListView(ListAPIView):
                 )
             }
 
-            # Merge the values into forecast data
             for item in forecast_data:
                 bom_entry_id = item['bom_entry__id']
                 delivery_data = delivery_adjustments.get(bom_entry_id, {})
@@ -1379,7 +1464,6 @@ class ForecastListView(ListAPIView):
 
 
 
-
 class ByRequestItemsListView(ListAPIView):
     def get(self, request, *args, **kwargs):
         inventory_id = self.kwargs.get("inventory_id")
@@ -1388,13 +1472,14 @@ class ByRequestItemsListView(ListAPIView):
             delivery_code = DeliveryCode.objects.filter(inventory_code=inventory_code).first()
 
             if delivery_code:
-                print(1)
-                # If DeliveryCode exists, fetch ByRequest items linked to it
                 by_request_items = ByRequest.objects.filter(delivery_code=delivery_code)
-                serializer = ByRequestSerializerC(by_request_items, many=True)
+                if by_request_items.exists():
+                    serializer = ByRequestSerializerC(by_request_items, many=True)
+                else:
+                    by_request_items = ByRequestItems.objects.all()
+                    serializer = ByRequestItemsSerializer(by_request_items, many=True)
+
             else:
-                print(2)
-                # If no DeliveryCode, fetch ByRequestItem list as labels
                 by_request_items = ByRequestItems.objects.all()
                 serializer = ByRequestItemsSerializer(by_request_items, many=True)
 
@@ -1404,17 +1489,36 @@ class ByRequestItemsListView(ListAPIView):
             return Response([])  # Return empty list if inventory_id is invalid
 
 
-
-
-
-
 class SubmitInventoryView(APIView):
     def post(self, request, idofinventory):
         requested_status = Status.objects.get(id=4)
 
-
         try:
             inventory = InventoryCode.objects.get(id=idofinventory)
+            employees = Employee.objects.filter(
+                area=inventory.area,
+                module_permissions__codename="approve_inventory"
+            ).distinct()
+
+            # Get corresponding users
+            users = User.objects.filter(employee__in=employees)
+            emails = employees.values_list("user__email", flat=True)
+
+            # Send an email
+            subject = "Inventory Approval Required"
+            message = f"Dear Approver,\n\nAn inventory in {inventory.area.location} requires your approval.\n\nPlease review it at your earliest convenience.\nhttp://localhost:5173/inventory/\n\nBest,\nInventory Team"
+
+            send_mail(
+                subject,
+                message,
+                settings.DEFAULT_FROM_EMAIL,  # Make sure this is configured in settings.py
+                list(emails),  # Convert QuerySet to a list
+                fail_silently=False,
+            )
+            print(users)
+            print('---')
+            print()
+
 
             inventory.status = requested_status
             inventory.save()
@@ -1435,3 +1539,10 @@ class SubmitInventoryView(APIView):
                 {"error": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+class SalesReportListViewDL(ListAPIView):
+    serializer_class = SalesReportSerializer
+
+    def get_queryset(self):
+        inventory_id = self.kwargs.get('inventory_id')
+        return SalesReport.objects.filter(inventory_code_id=inventory_id)

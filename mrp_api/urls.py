@@ -1,6 +1,7 @@
-# urls.py
+from django.conf import settings
+from django.conf.urls.static import static
 from django.urls import path
-from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView, EndingInventoryUploadView, BosItemsUploadView, InventoryCodeByAreaView, ForecastByInventoryCodeView, InsertDeliveryItemsView, UploadByRequest, DeleteDeliveryItemsView,UpdateDeliveryItemsView, UserAreasView, EndingInventoryListView, SalesReportListView, InitialReplenishmentListView, ForecastListView, ByRequestItemsListView, InventoryCodeDetailView, SubmitInventoryView
+from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView, EndingInventoryUploadView, BosItemsUploadView, InventoryCodeByAreaView, ForecastByInventoryCodeView, InsertDeliveryItemsView, UploadByRequest, DeleteDeliveryItemsView,UpdateDeliveryItemsView, UserAreasView, EndingInventoryListView, SalesReportListView, InitialReplenishmentListView, ForecastListView, ByRequestItemsListView, InventoryCodeDetailView, SubmitInventoryView, approve_mrp, ammend_mrp, SalesReportListViewDL
 
 
 urlpatterns = [
@@ -27,7 +28,10 @@ urlpatterns = [
     path('forecast/<int:inventory_code_id>/', ForecastListView.as_view(), name='forecast-list'),
     path('by_request_items/<int:inventory_id>/', ByRequestItemsListView.as_view(), name='by-request-list'),
     path('submit/<int:idofinventory>/', SubmitInventoryView.as_view(), name='submit'),
+    path('approve/<int:idofinventory>/', approve_mrp, name='approve'),
+    path('ammend/<int:idofinventory>/', ammend_mrp, name='ammend'),
 
+    path('sales-report-dl/<int:inventory_id>/', SalesReportListViewDL.as_view(), name='sales-report-dl'),
 
     path('areainventory/<int:area_id>/', InventoryCodeByAreaView.as_view(), name='area-inventory'),
     #path('forecast/<int:pk>/', ForecastByInventoryCodeView.as_view(), name='forecast'),
@@ -50,6 +54,9 @@ urlpatterns = [
 
     
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.SALES_FILES_URL, document_root=settings.SALES_FILES_ROOT)
 
 #path('searchlist/', SearchList.as_view(), name='searchlist'),
 # path('get_user/', GetUser.as_view(), name='get_user'),
