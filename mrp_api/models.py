@@ -276,8 +276,6 @@ class DeliveryItems(models.Model):
 	delivery_code = models.ForeignKey(DeliveryCode, on_delete=models.CASCADE, null=True, blank=True)
 	bom_entry = models.ForeignKey(BosItems, on_delete=models.CASCADE, related_name="bom_item_delivery")
 	first_adjustment = models.FloatField(default=0, null=True, blank=True)
-	first_qty_uom = models.CharField(max_length=20, null=True, blank=True)
-
 	second_adjustment = models.FloatField(default=0, null=True, blank=True)
 	third_adjustment = models.FloatField(default=0, null=True, blank=True)
 	first_final_delivery = models.FloatField(default=0, null=True, blank=True)
@@ -286,6 +284,9 @@ class DeliveryItems(models.Model):
 	first_qty_delivery = models.FloatField(default=0, null=True, blank=True)
 	second_qty_delivery = models.FloatField(default=0, null=True, blank=True)
 	third_qty_delivery = models.FloatField(default=0, null=True, blank=True)
+	first_qty_uom = models.CharField(max_length=20, null=True, blank=True)
+	second_qty_uom = models.CharField(max_length=20, null=True, blank=True)
+	third_qty_uom = models.CharField(max_length=20, null=True, blank=True)
 
 
 
@@ -321,3 +322,7 @@ class UserDefinedVariables(models.Model):
 	safety_stock = models.FloatField(default=0, null=True, blank=True)
 	ndbd = models.FloatField(default=0, null=True, blank=True)
 	number_of_request = models.IntegerField(default=1, null=True, blank=True)
+	number_of_items = models.IntegerField(default=1, null=True, blank=True)
+	first_delivery_multiplier = models.FloatField(default=0, null=True, blank=True)
+	second_delivery_multiplier = models.FloatField(default=0, null=True, blank=True)
+	third_delivery_multiplier = models.FloatField(default=0, null=True, blank=True)

@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from .models import Area, ModulePermissions, Modules, Roles, Employee, Departments, AccessKey, EndingInventory, \
     InventoryCode, BosItems, Forecast, DeliveryItems, DeliveryCode, ByRequest, SalesReport, PosItems, BomMasterlist, \
-    InitialReplenishment, ByRequestItems, Status, SalesReportExcel
+    InitialReplenishment, ByRequestItems, Status, SalesReportExcel, UserDefinedVariables
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import password_validation
@@ -350,3 +350,11 @@ class SalesReportSerializerDL(serializers.ModelSerializer):
     class Meta:
         model = SalesReportExcel
         fields = '__all__'  # Include download_url in API response
+
+
+
+class UserDefinedVariablesSerializer(serializers.ModelSerializer):
+    area = serializers.PrimaryKeyRelatedField(queryset=Area.objects.all())
+    class Meta:
+        model = UserDefinedVariables
+        fields = '__all__'

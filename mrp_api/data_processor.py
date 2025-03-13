@@ -5,16 +5,11 @@ import pandas as pd
 from django.db.models import Sum, Max, Subquery, OuterRef, F
 from django.db import transaction
 from concurrent.futures import ThreadPoolExecutor
-from mrp_api.models import Area, Sales, PosItems, BomMasterlist, SalesReport, InitialReplenishment, EndingInventory, InventoryCode, BosItems, Forecast, ByRequestItems, Status, SalesReportExcel
+from mrp_api.models import Area, Sales, PosItems, BomMasterlist, SalesReport, InitialReplenishment, EndingInventory, InventoryCode, BosItems, Forecast, ByRequestItems, Status, SalesReportExcel, UserDefinedVariables
 import numpy as np
 import os
 
 scheduler = BackgroundScheduler()
-
-# Constants
-NO_OF_DAYS = 21
-SEASONALITY_INDEX = 1.1
-DAYS_BEFORE_DEL = 5
 
 
 bos_items_data = list(
@@ -30,7 +25,7 @@ bos_items_df = pd.DataFrame(bos_items_data)
 bos_items_df.rename(columns={'id': 'bos_code_id'},inplace=True)
 processed_status = Status.objects.get(id=2)
 
-def process_item(item, sales_data, area):
+def process_item(item, sales_data, area, NO_OF_DAYS, SEASONALITY_INDEX):
     result = []
     sales = []
 
@@ -94,6 +89,11 @@ def calculate_area_sales(area):
 #     print(f"Start date: {start_date}")
 #     print(f"End date: {start_of_this_week}")
 
+    user_def_vars = UserDefinedVariables.objects.filter(area=area).first()
+    number_of_days = user_def_vars.number_of_days if user_def_vars else 21
+    seasonality_index = user_def_vars.seasonality_index if user_def_vars else 1.1
+
+
     pos_items = PosItems.objects.all()
     sales_data = Sales.objects.filter(
         outlet=area, sales_date__range=(start_date, end_date)
@@ -109,7 +109,7 @@ def calculate_area_sales(area):
     #pos_items = PosItems.objects.filter(id__in=sales_dict.keys())
     forecast_result, sales_result = [], []
     with ThreadPoolExecutor() as executor:
-        futures = [executor.submit(process_item, item, sales_dict, area) for item in pos_items]
+        futures = [executor.submit(process_item, item, sales_dict, area, number_of_days, seasonality_index) for item in pos_items]
         seen_sales = set()
         for future in futures:
             forecast_data, sales_data = future.result()
@@ -212,7 +212,7 @@ def calculate_area_sales(area):
             forecast_summary['DAYS_TO_LAST'] = np.where(forecast_summary['TOTAL_AVERAGE_DAILY_USAGE'] > 0,np.ceil(forecast_summary['actual_ending'] / forecast_summary['TOTAL_AVERAGE_DAILY_USAGE'] * 100) / 100,0)
 
 
-            forecast_summary['FORECASTED_ENDING_INVENTORY'] = ((forecast_summary['actual_ending'].fillna(0) + forecast_summary['upcoming_delivery'].fillna(0)) - (forecast_summary['TOTAL_AVERAGE_DAILY_USAGE'].fillna(0) * DAYS_BEFORE_DEL)).clip(lower=0)
+            forecast_summary['FORECASTED_ENDING_INVENTORY'] = ((forecast_summary['actual_ending'].fillna(0) + forecast_summary['upcoming_delivery'].fillna(0)) - (forecast_summary['TOTAL_AVERAGE_DAILY_USAGE'].fillna(0) * user_def_vars.ndbd)).clip(lower=0)
             forecast_summary['forecast'] = (forecast_summary['TOTAL_FORECAST_WEEKLY_CONSUMPTION'].fillna(0) - forecast_summary['FORECASTED_ENDING_INVENTORY']).clip(lower=0)
 
             forecast_summary['converted_ending_inventory'] = (

@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.conf.urls.static import static
 from django.urls import path
-from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView, EndingInventoryUploadView, BosItemsUploadView, InventoryCodeByAreaView, ForecastByInventoryCodeView, InsertDeliveryItemsView, UploadByRequest, DeleteDeliveryItemsView,UpdateDeliveryItemsView, UserAreasView, EndingInventoryListView, SalesReportListView, InitialReplenishmentListView, ForecastListView, ByRequestItemsListView, InventoryCodeDetailView, SubmitInventoryView, approve_mrp, ammend_mrp, SalesReportListViewDL
+from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView, EndingInventoryUploadView, BosItemsUploadView, InventoryCodeByAreaView, ForecastByInventoryCodeView, InsertDeliveryItemsView, UploadByRequest, DeleteDeliveryItemsView,UpdateDeliveryItemsView, UserAreasView, EndingInventoryListView, SalesReportListView, InitialReplenishmentListView, ForecastListView, ByRequestItemsListView, InventoryCodeDetailView, SubmitInventoryView, approve_mrp, ammend_mrp, SalesReportListViewDL, UserDefinedVariablesListCreateView, UserDefinedVariablesDetailView
 
 
 urlpatterns = [
@@ -30,8 +30,10 @@ urlpatterns = [
     path('submit/<int:idofinventory>/', SubmitInventoryView.as_view(), name='submit'),
     path('approve/<int:idofinventory>/', approve_mrp, name='approve'),
     path('ammend/<int:idofinventory>/', ammend_mrp, name='ammend'),
+    path('user-defined-variables/', UserDefinedVariablesListCreateView.as_view(), name='user-defined-variables-list'),
+    path('user-defined-variables/<int:pk>/', UserDefinedVariablesDetailView.as_view(), name='user-defined-variables-detail'),
 
-    path('sales-report-dl/<int:inventory_id>/', SalesReportListViewDL.as_view(), name='sales-report-dl'),
+    path('sales-report/<int:inventory_id>/', SalesReportListViewDL.as_view(), name='sales-report-dl'),
 
     path('areainventory/<int:area_id>/', InventoryCodeByAreaView.as_view(), name='area-inventory'),
     #path('forecast/<int:pk>/', ForecastByInventoryCodeView.as_view(), name='forecast'),

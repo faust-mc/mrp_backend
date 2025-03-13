@@ -1,5 +1,5 @@
 from rest_framework.views import APIView
-from rest_framework.generics import RetrieveAPIView, ListAPIView, ListCreateAPIView ,RetrieveUpdateAPIView
+from rest_framework.generics import RetrieveAPIView, ListAPIView, RetrieveUpdateDestroyAPIView,ListCreateAPIView ,RetrieveUpdateAPIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser
@@ -11,14 +11,14 @@ from rest_framework.decorators import action
 from django.contrib.auth.models import User
 from django.conf import settings
 from django.template.loader import render_to_string
-
+from django.forms.models import model_to_dict
 from django.contrib.auth.hashers import make_password, check_password
 from django.db.models import Q, Value, OuterRef, Subquery, F, Window
 from django.db.models.functions import RowNumber
 from django.db import connection, transaction
-from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, AccessKey, BomMasterlist, PosItems, Sales, UploadedFile, InventoryCode, BosItems, EndingInventory, Forecast, ByRequest, ByRequestItems, DeliveryCode, DeliveryItems, SalesReport, InitialReplenishment, Status
+from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, AccessKey, BomMasterlist, PosItems, Sales, UploadedFile, InventoryCode, BosItems, EndingInventory, Forecast, ByRequest, ByRequestItems, DeliveryCode, DeliveryItems, SalesReport, InitialReplenishment, Status, UserDefinedVariables
 
-from .serializers import ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer, EmployeeSerializerPlain, RolesSerializerPlain, AccessKeySerializer, UserDetailSerializer,  ModulesSerializerParent, FileUploadSerializer, InventoryCodeSerializer, ForecastSerializer, DeliveryItemsSerializer,ByRequestSerializer, EndingInventorySerializer, SalesReportSerializer, InitialReplenishmentSerializer, ByRequestSerializerC, ByRequestItemsSerializer
+from .serializers import ModuleSerializer, EmployeeSerializer, AreaSerializer, RoleSerializer, DepartmentsSerializer, ChangePasswordSerializer, EmployeeSerializerPlain, RolesSerializerPlain, AccessKeySerializer, UserDetailSerializer,  ModulesSerializerParent, FileUploadSerializer, InventoryCodeSerializer, ForecastSerializer, DeliveryItemsSerializer,ByRequestSerializer, EndingInventorySerializer, SalesReportSerializer, InitialReplenishmentSerializer, ByRequestSerializerC, ByRequestItemsSerializer, UserDefinedVariablesSerializer
 
 from collections import defaultdict
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -241,6 +241,17 @@ def update_sales_report(mrp, delivery_code):
 def fuzzy_match(query, choices, limit=3, threshold=70):
     matches = process.extract(query, choices, limit=limit, score_cutoff=threshold)
     return [(match, score) for match, score, _ in matches]
+
+
+class UserDefinedVariablesListCreateView(ListCreateAPIView):
+    queryset = UserDefinedVariables.objects.all()
+    serializer_class = UserDefinedVariablesSerializer
+
+class UserDefinedVariablesDetailView(RetrieveUpdateDestroyAPIView):
+    queryset = UserDefinedVariables.objects.all()
+    serializer_class = UserDefinedVariablesSerializer
+
+
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -998,7 +1009,6 @@ class SalesUploadView(APIView):
 
 class EndingInventoryUploadView(APIView):
     def post(self, request):
-        print(request.user)
 
         serializer = FileUploadSerializer(data=request.data)
         if serializer.is_valid():
@@ -1155,6 +1165,8 @@ class InsertDeliveryItemsView(APIView):
     def post(self, request, pk):
         data = request.data
 
+
+
         try:
             inventory_code = InventoryCode.objects.get(id=pk)
         except InventoryCode.DoesNotExist:
@@ -1179,10 +1191,20 @@ class InsertDeliveryItemsView(APIView):
             DeliveryItems(
                 delivery_code=delivery_code,
                 bom_entry=bom_entries[item['bom_entry__id']],  # Use pre-fetched object
-                first_adjustment=item['adjustment'],
-                first_final_delivery=item['final_delivery'],
-                first_qty_delivery=item['quantity_for_delivery'],
-                first_qty_uom = f"{item['quantity_for_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['quantity_for_delivery'] else "-"
+                first_adjustment = item['first_adjustment'],
+                second_adjustment = item['second_adjustment'],
+                third_adjustment = item['third_adjustment'],
+                first_final_delivery = item['first_final_delivery'],
+                second_final_delivery =  item['second_final_delivery'],
+                third_final_delivery = item['third_final_delivery'],
+                first_qty_delivery =  item['first_qty_delivery'],
+                second_qty_delivery = item['second_qty_delivery'],
+                third_qty_delivery =  item['third_qty_delivery'],
+                first_qty_uom =  f"{item['first_qty_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['first_qty_delivery'] else "-",
+                second_qty_uom =  f"{item['second_qty_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['second_qty_delivery'] else "-",
+                third_qty_uom =  f"{item['third_qty_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['third_qty_delivery'] else "-",
+
+
 
             )
             for item in data.get('adjustment', [])
@@ -1264,10 +1286,18 @@ class UpdateDeliveryItemsView(APIView):
 
                 bom_entry=bom_entries[item['bom_entry__id']],  # Use pre-fetched object
                 defaults={
-                    'first_adjustment': item['adjustment'],
-                    'first_final_delivery': item['final_delivery'],
-                    'first_qty_delivery': item['quantity_for_delivery'],
-                    'first_qty_uom' : f"{item['quantity_for_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['quantity_for_delivery'] else "-"
+                    'first_adjustment' : item['first_adjustment'],
+                    'second_adjustment' : item['second_adjustment'],
+                    'third_adjustment' : item['third_adjustment'],
+                    'first_final_delivery' : item['first_final_delivery'],
+                    'second_final_delivery' :  item['second_final_delivery'],
+                    'third_final_delivery' : item['third_final_delivery'],
+                    'first_qty_delivery' :  item['first_qty_delivery'],
+                    'second_qty_delivery' : item['second_qty_delivery'],
+                    'third_qty_delivery' :  item['third_qty_delivery'],
+                    'first_qty_uom' :  f"{item['first_qty_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['first_qty_delivery'] else "-",
+                    'second_qty_uom' :  f"{item['second_qty_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['second_qty_delivery'] else "-",
+                    'third_qty_uom' :  f"{item['third_qty_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['third_qty_delivery'] else "-",
                 },
 
             )
@@ -1354,8 +1384,28 @@ class InventoryCodeDetailView(RetrieveAPIView):
     def get(self, request, *args, **kwargs):
         inventory_id = self.kwargs.get("pk")
         inventory_code = get_object_or_404(InventoryCode, id=inventory_id)
+
+        # Serialize the inventory_code
         serializer = self.get_serializer(inventory_code)
-        return Response(serializer.data)
+
+        # Add number_of_request from UserDefinedVariables
+        user_def_vars = UserDefinedVariables.objects.filter(area=inventory_code.area).first()
+        number_of_request = user_def_vars.number_of_request if user_def_vars else 0  # Default to 0
+        number_of_items = user_def_vars.number_of_items if user_def_vars else 1  # Default to 0
+
+        first_delivery_multiplier = user_def_vars.first_delivery_multiplier if user_def_vars else 1  # Default to 0
+        second_delivery_multiplier = user_def_vars.second_delivery_multiplier if user_def_vars else 1  # Default to 0
+        third_delivery_multiplier = user_def_vars.third_delivery_multiplier if user_def_vars else 1  # Default to 0
+
+        # Include it in the response
+        data = serializer.data
+        data["number_of_request"] = number_of_request
+        data["number_of_items"] = number_of_items
+        data["delivery_multiplier"] = [first_delivery_multiplier, second_delivery_multiplier, third_delivery_multiplier]
+
+
+
+        return Response(data)
 
 
 class EndingInventoryListView(ListAPIView):
@@ -1448,7 +1498,14 @@ class ForecastListView(ListAPIView):
                 ).values(
                     'bom_entry_id',
                     'first_adjustment',
-                    'first_final_delivery'
+                    'first_final_delivery',
+                    'first_qty_uom',
+                    'second_adjustment',
+                    'second_final_delivery',
+                    'second_qty_uom',
+                    'third_adjustment',
+                    'third_final_delivery',
+                    'third_qty_uom',
                 )
             }
 
@@ -1457,6 +1514,13 @@ class ForecastListView(ListAPIView):
                 delivery_data = delivery_adjustments.get(bom_entry_id, {})
                 item['first_adjustment'] = delivery_data.get('first_adjustment', 0)
                 item['first_final_delivery'] = delivery_data.get('first_final_delivery', 0)
+                item['first_qty_uom'] = delivery_data.get('first_qty_uom', 0)
+                item['second_adjustment'] = delivery_data.get('second_adjustment', 0)
+                item['second_final_delivery'] = delivery_data.get('second_final_delivery', 0)
+                item['second_qty_uom'] = delivery_data.get('second_qty_uom', 0)
+                item['third_adjustment'] = delivery_data.get('third_adjustment', 0)
+                item['third_final_delivery'] = delivery_data.get('third_final_delivery', 0)
+                item['third_qty_uom'] = delivery_data.get('third_qty_uom', 0)
 
             return JsonResponse(forecast_data, safe=False)
 
@@ -1515,9 +1579,6 @@ class SubmitInventoryView(APIView):
                 list(emails),  # Convert QuerySet to a list
                 fail_silently=False,
             )
-            print(users)
-            print('---')
-            print()
 
 
             inventory.status = requested_status
