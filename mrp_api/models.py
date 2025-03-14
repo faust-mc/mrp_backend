@@ -197,10 +197,14 @@ class Sales(models.Model):
 class InventoryCode(models.Model):
 	area = models.ForeignKey(Area, on_delete=models.CASCADE, null=True, blank=True)
 	status = models.ForeignKey(Status, on_delete=models.CASCADE, default=1,null=True, blank=True)
+	number_of_request = models.IntegerField(default=1, null=True, blank=True)
+	number_of_items = models.IntegerField(default=1, null=True, blank=True)
 	inventory_code = models.CharField(max_length=100, null=True, blank=True)
 	created_at = models.DateTimeField(auto_now_add=True, null=True, blank=True)
 	updated_at = models.DateTimeField(auto_now=True, null=True, blank=True)
+	approved_at = models.DateTimeField(null=True, blank=True)
 	uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='uploaded_by')
+	approved_by  = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_by')
 
 	def save(self, *args, **kwargs):
 		if not self.inventory_code and self.area:
@@ -269,7 +273,6 @@ class DeliveryCode(models.Model):
 
 	requested_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='requested_by')
 	updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_by')
-	approved_by  = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_by')
 
 
 class DeliveryItems(models.Model):

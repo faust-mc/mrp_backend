@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.conf.urls.static import static
 from django.urls import path
-from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView, EndingInventoryUploadView, BosItemsUploadView, InventoryCodeByAreaView, ForecastByInventoryCodeView, InsertDeliveryItemsView, UploadByRequest, DeleteDeliveryItemsView,UpdateDeliveryItemsView, UserAreasView, EndingInventoryListView, SalesReportListView, InitialReplenishmentListView, ForecastListView, ByRequestItemsListView, InventoryCodeDetailView, SubmitInventoryView, approve_mrp, ammend_mrp, SalesReportListViewDL, UserDefinedVariablesListCreateView, UserDefinedVariablesDetailView
+from .views import CustomTokenObtainPairView, ModuleListView, EmployeeListView, EmployeeDetailView, CombinedModuleListView, AreaListView, RoleListCreate, CombinedDataView, ChangePasswordView, EmployeeFlatDetailView, EmployeeEditView, RoleFlatDetailView, RoleEditView, AccessKeyView, UploadBOMMasterlist, PosItemsUploadView, SalesUploadView, EndingInventoryUploadView, BosItemsUploadView, InventoryCodeByAreaView, ForecastByInventoryCodeView, InsertDeliveryItemsView, UploadByRequest, DeleteDeliveryItemsView,UpdateDeliveryItemsView, UserAreasView, EndingInventoryListView, SalesReportListView, InitialReplenishmentListView, ForecastListView, ByRequestItemsListView, InventoryCodeDetailView, SubmitInventoryView, approve_mrp, ammend_mrp, SalesReportListViewDL, UserDefinedVariablesListCreateView, UserDefinedVariablesDetailView, ConsolidatedItemsView
 
 
 urlpatterns = [
@@ -30,6 +30,7 @@ urlpatterns = [
     path('submit/<int:idofinventory>/', SubmitInventoryView.as_view(), name='submit'),
     path('approve/<int:idofinventory>/', approve_mrp, name='approve'),
     path('ammend/<int:idofinventory>/', ammend_mrp, name='ammend'),
+    path('consolidated/<int:inventory_id>/', ConsolidatedItemsView.as_view(), name='consolidated-order-list'),
     path('user-defined-variables/', UserDefinedVariablesListCreateView.as_view(), name='user-defined-variables-list'),
     path('user-defined-variables/<int:pk>/', UserDefinedVariablesDetailView.as_view(), name='user-defined-variables-detail'),
 

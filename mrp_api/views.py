@@ -13,7 +13,7 @@ from django.conf import settings
 from django.template.loader import render_to_string
 from django.forms.models import model_to_dict
 from django.contrib.auth.hashers import make_password, check_password
-from django.db.models import Q, Value, OuterRef, Subquery, F, Window
+from django.db.models import Q, Value, OuterRef, Subquery, F, Window, Value, CharField
 from django.db.models.functions import RowNumber
 from django.db import connection, transaction
 from .models import Area, Departments, ModulePermissions, Modules, Roles, Employee, AccessKey, BomMasterlist, PosItems, Sales, UploadedFile, InventoryCode, BosItems, EndingInventory, Forecast, ByRequest, ByRequestItems, DeliveryCode, DeliveryItems, SalesReport, InitialReplenishment, Status, UserDefinedVariables
@@ -28,7 +28,9 @@ from django.utils import timezone, html
 from django.core.mail import send_mail, EmailMultiAlternatives
 from django.http import StreamingHttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
-from openpyxl import Workbook
+import openpyxl
+
+from openpyxl.styles import Font, PatternFill
 import logging
 import random
 import string
@@ -89,6 +91,8 @@ def approve_mrp(request, idofinventory):
 
         delivery_code = DeliveryCode.objects.filter(inventory_code=mrp).select_related("requested_by").first()
         mrp.status = Status.objects.get(id=5)
+        mrp.approved_at=timezone.now()
+        mrp.approved_by=request.user
         mrp.save()
         file_name=update_sales_report(mrp,delivery_code)
         send_approval_email(mrp, file_name)
@@ -149,20 +153,20 @@ def update_sales_report(mrp, delivery_code):
             return
         delivery_items_data = list(
             DeliveryItems.objects.filter(delivery_code=delivery_code)
-            .values("bom_entry__bos_code", "bom_entry__bos_material_description",
+            .values("bom_entry__bos_code", "bom_entry__bos_material_description","bom_entry__category","bom_entry__delivery_uom",
                     "first_adjustment", "second_adjustment", "third_adjustment",
                     "first_final_delivery", "second_final_delivery", "third_final_delivery",
-                    "first_qty_delivery", "second_qty_delivery", "third_qty_delivery", "first_qty_uom")
+                    "first_qty_delivery", "second_qty_delivery", "third_qty_delivery", "first_qty_uom", "second_qty_uom", "third_qty_uom")
         )
 
 
         by_request_items_data = list(
             ByRequest.objects.filter(delivery_code=delivery_code)
-            .values("by_request_item__bos_code", "by_request_item__bos_material_description",
+            .values("by_request_item__bos_code", "by_request_item__bos_material_description","by_request_item__category","by_request_item__delivery_uom",
                     "total_weekly_request",
                     "first_delivery", "second_delivery", "third_delivery",
                     "first_final_delivery", "second_final_delivery", "third_final_delivery",
-                    "first_qty_delivery", "second_qty_delivery", "third_qty_delivery", "first_qty_uom")
+                    "first_qty_delivery", "second_qty_delivery", "third_qty_delivery", "first_qty_uom", "second_qty_byrequest_uom", "third_qty_byrequest_uom")
         )
 
 
@@ -171,7 +175,9 @@ def update_sales_report(mrp, delivery_code):
 
         delivery_items_df.rename(columns={
             "bom_entry__bos_code": "BOS Code",
+            'bom_entry__category': "Category",
             "bom_entry__bos_material_description": "Material Description",
+            "bom_entry__delivery_uom" : "Delivery UOM",
             "first_adjustment": "Adjustment 1",
             "second_adjustment": "Adjustment 2",
             "third_adjustment": "Adjustment 3",
@@ -181,12 +187,16 @@ def update_sales_report(mrp, delivery_code):
             "first_qty_delivery": "Quantity Delivered 1",
             "second_qty_delivery": "Quantity Delivered 2",
             "third_qty_delivery": "Quantity Delivered 3",
-            "first_qty_uom": "Quantity For Delivery",
+            "first_qty_uom": "Quantity For First Delivery",
+            "second_qty_uom": "Quantity For Second Delivery",
+            "third_qty_uom": "Quantity For Third Delivery",
         }, inplace=True)
-
+        print(1)
         by_request_items_df.rename(columns={
             "by_request_item__bos_code": "BOS Code",
+            'by_request_item__category': "Category",
             "by_request_item__bos_material_description": "Material Description",
+            "by_request_item__delivery_uom" : "Delivery UOM",
             "total_weekly_request": "Total Weekly Request",
             "first_delivery": "Delivery 1",
             "second_delivery": "Delivery 2",
@@ -197,29 +207,38 @@ def update_sales_report(mrp, delivery_code):
             "first_qty_delivery": "Quantity Delivered 1",
             "second_qty_delivery": "Quantity Delivered 2",
             "third_qty_delivery": "Quantity Delivered 3",
-            "first_qty_uom": "Quantity For Delivery",
+            "first_qty_uom": "Quantity For First Delivery",
+            "second_qty_byrequest_uom" : "Quantity For Second Delivery",
+            "third_qty_byrequest_uom" : "Quantity For Third Delivery"
         }, inplace=True)
 
-
+        print(2)
         delivery_selected = delivery_items_df[
-            ["BOS Code", "Material Description", "Quantity For Delivery"]
+            ["BOS Code", "Category","Delivery UOM","Material Description", "Quantity For First Delivery", "Quantity For Second Delivery","Quantity For Third Delivery",]
         ].copy()
+        print(2.5)
         by_request_selected = by_request_items_df[
-            ["BOS Code", "Material Description", "Quantity For Delivery"]
+            ["BOS Code", "Category","Delivery UOM", "Material Description", "Quantity For First Delivery", "Quantity For Second Delivery","Quantity For Third Delivery"]
         ].copy()
 
         # add an identifier column to distinguish sections
-        by_request_selected["Category"] = "By Request"
-
+        delivery_selected["Item Classification"] = "For Delivery Items"
+        by_request_selected["Item Classification"] = "By Request"
+        print(3)
         # create a boundary row
+
         boundary_row = pd.DataFrame({
             "BOS Code": ["BOS Code"],
+            "Category": ["Category"],
+            "Delivery UOM": ["Delivery UOM"],
             "Material Description": ["Material Description"],
-            "Quantity For Delivery": ["Quantity For Delivery"],
+            "Quantity For First Delivery": ["Quantity For First Delivery"],
+            "Quantity For Second Delivery": ["Quantity For Second Delivery"],
+            "Quantity For Third Delivery": ["Quantity For Third Delivery"],
+            "Item Classification" : ["Item Classification"]
 
-            "Category": ["Boundary"]
         })
-
+        boundary_row_styled = boundary_row.style.applymap(lambda x: 'background-color: yellow')
         #combine DataFrames with the boundary
         final_df = pd.concat([delivery_selected, boundary_row, by_request_selected], ignore_index=True)
 
@@ -230,6 +249,16 @@ def update_sales_report(mrp, delivery_code):
                 by_request_items_df.to_excel(writer, index=False, sheet_name="By Request Items")
             if not final_df.empty:
                 final_df.to_excel(writer, index=False, sheet_name="Consolidated Reports")
+
+        wb = openpyxl.load_workbook(file_path)
+        sheet = wb["Consolidated Reports"]
+
+        # style the boundary row
+        for cell in sheet[delivery_selected.shape[0] + 2]:
+            cell.fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type = "solid")
+
+        # save the workbook
+        wb.save(file_path)
 
         logger.info(f"✅ Updated {file_name} with Delivery Items & By Request Items.")
         return file_name
@@ -1164,7 +1193,9 @@ class InsertDeliveryItemsView(APIView):
 
     def post(self, request, pk):
         data = request.data
-
+        for x in data['by_request_items']:
+            print(x)
+            print()
 
 
         try:
@@ -1200,9 +1231,9 @@ class InsertDeliveryItemsView(APIView):
                 first_qty_delivery =  item['first_qty_delivery'],
                 second_qty_delivery = item['second_qty_delivery'],
                 third_qty_delivery =  item['third_qty_delivery'],
-                first_qty_uom =  f"{item['first_qty_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['first_qty_delivery'] else "-",
-                second_qty_uom =  f"{item['second_qty_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['second_qty_delivery'] else "-",
-                third_qty_uom =  f"{item['third_qty_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['third_qty_delivery'] else "-",
+                first_qty_uom =  f"{round(item['first_qty_delivery'],2)} {bom_entries[item['bom_entry__id']].bos_uom}" if item['first_qty_delivery'] else "-",
+                second_qty_uom =  f"{round(item['second_qty_delivery'],2)} {bom_entries[item['bom_entry__id']].bos_uom}" if item['second_qty_delivery'] else "-",
+                third_qty_uom =  f"{round(item['third_qty_delivery'],2)} {bom_entries[item['bom_entry__id']].bos_uom}" if item['third_qty_delivery'] else "-",
 
 
 
@@ -1239,7 +1270,10 @@ class InsertDeliveryItemsView(APIView):
                         first_qty_delivery=by_request['first_delivery'] * by_request_item.conversion,
                         second_qty_delivery=by_request['second_delivery'] * by_request_item.conversion,
                         third_qty_delivery=by_request['third_delivery'] * by_request_item.conversion,
-                        first_qty_uom=f'{by_request['first_delivery'] * by_request_item.conversion} {by_request_item.bos_uom}' if by_request['first_delivery'] else "-"
+                        first_qty_uom=f'{round(by_request['first_delivery'] * by_request_item.conversion,2)} {by_request_item.bos_uom}' if by_request['first_delivery'] else "-",
+                        second_qty_byrequest_uom=f'{round(by_request['first_delivery'] * by_request_item.conversion,2)} {by_request_item.bos_uom}' if by_request['first_delivery'] else "-",
+                        third_qty_byrequest_uom=f'{round(by_request['first_delivery'] * by_request_item.conversion,2)} {by_request_item.bos_uom}' if by_request['first_delivery'] else "-",
+
                     )
                 )
 
@@ -1247,6 +1281,8 @@ class InsertDeliveryItemsView(APIView):
                 ByRequest.objects.bulk_create(by_request_objects)
         draft_status = Status.objects.get(id=3)
         inventory_code.status = draft_status
+        inventory_code.number_of_request = data['number_of_request']
+        inventory_code.number_of_items = data['number_of_items']
         inventory_code.save()
         return Response(
             {"inserted_delivery_items": DeliveryItemsSerializer(delivery_items_objects, many=True).data},
@@ -1257,6 +1293,8 @@ class UpdateDeliveryItemsView(APIView):
 
     def post(self, request, pk):
         data = request.data
+        edit_message = data.get('edit_message')
+
 
         try:
             inventory_code = InventoryCode.objects.get(id=pk)
@@ -1295,9 +1333,9 @@ class UpdateDeliveryItemsView(APIView):
                     'first_qty_delivery' :  item['first_qty_delivery'],
                     'second_qty_delivery' : item['second_qty_delivery'],
                     'third_qty_delivery' :  item['third_qty_delivery'],
-                    'first_qty_uom' :  f"{item['first_qty_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['first_qty_delivery'] else "-",
-                    'second_qty_uom' :  f"{item['second_qty_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['second_qty_delivery'] else "-",
-                    'third_qty_uom' :  f"{item['third_qty_delivery']} {bom_entries[item['bom_entry__id']].bos_uom}" if item['third_qty_delivery'] else "-",
+                    'first_qty_uom' :  f"{round(item['first_qty_delivery'],2)} {bom_entries[item['bom_entry__id']].bos_uom}" if item['first_qty_delivery'] else "-",
+                    'second_qty_uom' :  f"{round(item['second_qty_delivery'],2)} {bom_entries[item['bom_entry__id']].bos_uom}" if item['second_qty_delivery'] else "-",
+                    'third_qty_uom' :  f"{round(item['third_qty_delivery'],2)} {bom_entries[item['bom_entry__id']].bos_uom}" if item['third_qty_delivery'] else "-",
                 },
 
             )
@@ -1329,9 +1367,38 @@ class UpdateDeliveryItemsView(APIView):
                         'first_qty_delivery': by_request['first_delivery'] * by_request_item.conversion,
                         'second_qty_delivery': by_request['second_delivery'] * by_request_item.conversion,
                         'third_qty_delivery': by_request['third_delivery'] * by_request_item.conversion,
-                        'first_qty_uom': f'{by_request['first_delivery'] * by_request_item.conversion} {by_request_item.bos_uom}' if by_request['first_delivery'] else "-"
+                        'first_qty_uom': f'{round(by_request['first_delivery'] * by_request_item.conversion,2)} {by_request_item.bos_uom}' if by_request['first_delivery'] else "-",
+
+                        'second_qty_byrequest_uom': f'{round(by_request['second_delivery'] * by_request_item.conversion,2)} {by_request_item.bos_uom}' if by_request['second_delivery'] else "-",
+
+                        'third_qty_byrequest_uom': f'{round(by_request['third_delivery'] * by_request_item.conversion,2)} {by_request_item.bos_uom}' if by_request['third_delivery'] else "-",
                     }
                 )
+        inventory_code.number_of_request = data['number_of_request']
+        inventory_code.number_of_items = data['number_of_items']
+        inventory_code.save()
+
+        if edit_message:
+            subject = f"MRP Emergency Adjustment Update - Inventory ID {pk}"
+            message = f"""
+            An emergency adjustment has been made.
+
+            Details:
+            {edit_message}
+
+            Updated by: {request.user.username}
+            Timestamp: {timezone.now()}
+            """
+
+            recipient_list = ["faustnizzane@gmail.com"]  # Replace with actual recipient(s)
+
+            send_mail(
+                subject,
+                message,
+                settings.DEFAULT_FROM_EMAIL,  # Ensure this is set in settings.py
+                recipient_list,
+                fail_silently=False,
+            )
 
         return Response(
             {"updated_delivery_items": DeliveryItemsSerializer(delivery_items_objects, many=True).data},
@@ -1384,20 +1451,23 @@ class InventoryCodeDetailView(RetrieveAPIView):
     def get(self, request, *args, **kwargs):
         inventory_id = self.kwargs.get("pk")
         inventory_code = get_object_or_404(InventoryCode, id=inventory_id)
-
-        # Serialize the inventory_code
         serializer = self.get_serializer(inventory_code)
 
-        # Add number_of_request from UserDefinedVariables
+
         user_def_vars = UserDefinedVariables.objects.filter(area=inventory_code.area).first()
-        number_of_request = user_def_vars.number_of_request if user_def_vars else 0  # Default to 0
-        number_of_items = user_def_vars.number_of_items if user_def_vars else 1  # Default to 0
+        if inventory_code.status.status < 5:
+            number_of_request = user_def_vars.number_of_request if user_def_vars else 1
+            number_of_items = user_def_vars.number_of_items if user_def_vars else 1
+        else:
+            number_of_request = inventory_code.number_of_request if inventory_code else 1
+            number_of_items = inventory_code.number_of_items if inventory_code else 1
 
-        first_delivery_multiplier = user_def_vars.first_delivery_multiplier if user_def_vars else 1  # Default to 0
-        second_delivery_multiplier = user_def_vars.second_delivery_multiplier if user_def_vars else 1  # Default to 0
-        third_delivery_multiplier = user_def_vars.third_delivery_multiplier if user_def_vars else 1  # Default to 0
 
-        # Include it in the response
+        first_delivery_multiplier = user_def_vars.first_delivery_multiplier if user_def_vars else 1
+        second_delivery_multiplier = user_def_vars.second_delivery_multiplier if user_def_vars else 0
+        third_delivery_multiplier = user_def_vars.third_delivery_multiplier if user_def_vars else 0
+
+
         data = serializer.data
         data["number_of_request"] = number_of_request
         data["number_of_items"] = number_of_items
@@ -1487,7 +1557,9 @@ class ForecastListView(ListAPIView):
                     'forecast_weekly_consumption',
                     'forecasted_ending_inventory',
                     'converted_ending_inventory',
-                    'forecast'
+                    'forecast',
+
+
                 )
             )
 
@@ -1506,6 +1578,7 @@ class ForecastListView(ListAPIView):
                     'third_adjustment',
                     'third_final_delivery',
                     'third_qty_uom',
+
                 )
             }
 
@@ -1522,9 +1595,13 @@ class ForecastListView(ListAPIView):
                 item['third_final_delivery'] = delivery_data.get('third_final_delivery', 0)
                 item['third_qty_uom'] = delivery_data.get('third_qty_uom', 0)
 
+
             return JsonResponse(forecast_data, safe=False)
 
         return JsonResponse({"error": "Missing inventory_code_id"}, status=400)
+
+
+
 
 
 
@@ -1607,3 +1684,62 @@ class SalesReportListViewDL(ListAPIView):
     def get_queryset(self):
         inventory_id = self.kwargs.get('inventory_id')
         return SalesReport.objects.filter(inventory_code_id=inventory_id)
+
+
+
+class ConsolidatedItemsView(APIView):
+    def get(self, request, inventory_id):
+        # Query for Delivery Items
+        delivery_query = (
+            DeliveryItems.objects
+            .select_related("delivery_code", "bom_entry")
+            .filter(delivery_code__inventory_code_id=148)
+            .annotate(
+                bos_code=F("bom_entry__bos_code"),
+                delivery_uom=F("bom_entry__delivery_uom"),
+                bos_material_description=F("bom_entry__bos_material_description"),
+                bos_uom=F("bom_entry__bos_uom"),
+                source=Value("Delivery", output_field=CharField())  # Distinguish source
+            )
+            .values(
+                "delivery_code_id",
+                "bos_code",
+                "bos_material_description",
+                "delivery_uom",
+                "bos_uom",
+                "first_qty_uom",
+                "second_qty_uom",
+                "third_qty_uom",
+                "source"
+            )
+        )
+
+        # Query for ByRequest Items
+        by_request_query = (
+            ByRequest.objects
+            .select_related("delivery_code", "by_request_item")
+            .filter(delivery_code__inventory_code_id=148)
+            .annotate(
+                bos_code=F("by_request_item__bos_code"),
+                delivery_uom=F("by_request_item__delivery_uom"),
+                bos_material_description=F("by_request_item__bos_material_description"),
+                bos_uom=F("by_request_item__bos_uom"),
+                source=Value("ByRequest", output_field=CharField())  # Distinguish source
+            )
+            .values(
+                "delivery_code_id",
+                "bos_code",
+                "bos_material_description",
+                "delivery_uom",
+                "bos_uom",
+                "first_qty_uom",
+                "second_qty_byrequest_uom",  # Adjusted for ByRequest
+                "third_qty_byrequest_uom",
+                "source"
+            )
+        )
+
+        # Combine both queries using UNION
+        combined_query = delivery_query.union(by_request_query)
+
+        return Response(combined_query)

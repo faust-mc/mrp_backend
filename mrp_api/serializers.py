@@ -358,3 +358,17 @@ class UserDefinedVariablesSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserDefinedVariables
         fields = '__all__'
+
+
+
+class InventoryReportSerializer(serializers.Serializer):
+    inventory_code_id = serializers.IntegerField()
+    delivery_code_id = serializers.IntegerField()
+    bos_code = serializers.CharField()
+    bos_material_description = serializers.CharField()
+    bos_uom = serializers.CharField()
+    first_qty_uom = serializers.IntegerField()
+    second_qty_uom = serializers.IntegerField()
+    third_qty_uom = serializers.IntegerField()
+    source = serializers.CharField()
+
